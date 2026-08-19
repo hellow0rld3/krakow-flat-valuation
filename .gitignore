@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+
+# wyniki MCMC - odtwarzalne, nie trzymamy w repo
+artifacts/
+*.nc
+*.npz
+
+# surowe scrapy z tytulami i linkami - nie trafiaja do repo
+data/raw/
