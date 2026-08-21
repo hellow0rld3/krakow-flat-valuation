@@ -66,6 +66,21 @@ class Scaler():
     def from_dict(cls, d):
         return cls(mean = np.array(d["mean"]), std = np.array(d["std"]))
 
+
+def build(df, levels=None, scaler=None):
+    """Dostaje ramke juz przetworzana przez prepare_dataset i zwraca przygotowane X, y, group_idx, levels, scaler"""
+    X_raw = df[FEATURES].to_numpy(dtype=np.float64)
+    y = df[TARGET].to_numpy(dtype=np.float64)
+    group_idx, levels = encode(df, levels)
+
+    if scaler is None:
+        scaler = Scaler()
+        scaler.fit(X_raw)
+    X = scaler.transform(X_raw)
+
+    return {"X" : X, "y" : y, "group_idx" : group_idx, "levels" : levels, "scaler" : scaler}
+
+
     
 
 
