@@ -40,4 +40,33 @@ def split(df, fraction=0.2, seed=1234, min_ofert=10):
     train = df.drop(test.index)
     return train, test
 
+class Scaler():
+    def __init__(self, mean=None, std=None):
+        self.mean = mean
+        self.std = std
+
+    def fit(self, X):
+        self.mean = np.mean(X, axis=0)
+        self.std = np.std(X, axis=0)
+        # Zera zamieniam na jedynki aby uniknac dzielenia przez zero w transform
+        self.std = np.where(self.std < 1e-8, 1.0, self.std)
+
+    def transform(self, X):
+        return (X - self.mean) / self.std
+
+    def fit_transform(self, X):
+        self.fit(X)
+        return self.transform(X)
+
+    #JSON nie zapisze tablic numpy, więc konwertujemy je na listy przy zapisie i z powrotem przy odczycie
+    def to_dict(self):
+        return {"mean": self.mean.tolist(), "std": self.std.tolist()}
+
+    @classmethod
+    def from_dict(cls, d):
+        return cls(mean = np.array(d["mean"]), std = np.array(d["std"]))
+
+    
+
+
 
