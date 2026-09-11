@@ -15,24 +15,44 @@ def zbiory():
     train, test = data.split(df)
     tr = data.build(train)
     te = data.build(test, levels=tr["levels"], scaler=tr["scaler"])
-    return tr, te
+    return {"train_df": train, "tr": tr, "test_df": test, "te": te}
 
 
-def test_ksztalty_sa_spojne(zbiory):
-    """X, y i group_idx musza opisywac te same wiersze.
+def test_wiersze_odpowiadaja_zrodlu(zbiory):
+    """X, y i group_idx musza opisywac te same wiersze co ramka zrodlowa.
 
-    Rozjazd liczby wierszy to typowy skutek uboczny filtrowania danych
-    w jednym miejscu i zapomnienia o nim w drugim. Model nie zglosi bledu
-    tylko po prostu dopasuje ceny do niewlasciwych mieszkan.
+    Sprawdzamy dwie rzeczy, kazda z innego powodu:
 
-    Sprawdzamy tez, ze y ma ksztalt (N,), a nie (N, 1) - ta druga postac
-    psuje pozniej broadcasting przy liczeniu rozkladu predykcyjnego.
+    1. Ksztalty. Rozjazd DLUGOSCI i tak wywalilby pozniej MCMC
+       ("Incompatible shapes for broadcasting"), wiec tutaj tylko lapiemy
+       go wczesniej i czytelniej. Realna wartosc ma natomiast warunek
+       y.shape == (N,): postac (N, 1) nie zglosi bledu, tylko po cichu
+       rozjedzie broadcasting przy liczeniu rozkladu predykcyjnego.
+
+    2. Zgodnosc wiersz po wierszu. To jest przypadek, ktorego nie wykryje
+       nic innego: tablice o poprawnych ksztaltach, ale z przestawionymi
+       wierszami. Zdarza sie, gdy ktos przefiltruje albo posortuje jedno
+       zrodlo, a zapomni o pozostalych. Model policzy sie normalnie
+       i dopasuje ceny do niewlasciwych mieszkan.
+
+    Dla wybranych wierszy sprawdzamy wiec, ze y zgadza sie z cena z ramki,
+    ze group_idx wskazuje na wlasciwa dzielnice, i ze odstandaryzowane X
+    odtwarza oryginalne cechy.
     """
-    for zbior in zbiory:
+    for klucz_df, klucz_zbior in [("train_df", "tr"), ("test_df", "te")]:
+        df, zbior = zbiory[klucz_df], zbiory[klucz_zbior]
         n = len(zbior["y"])
+
         assert zbior["X"].shape == (n, len(data.FEATURES))
         assert zbior["y"].shape == (n,)
         assert zbior["group_idx"].shape == (n,)
+
+        for i in (0, n // 3, n - 1):
+            assert zbior["y"][i] == pytest.approx(df[data.TARGET].iloc[i])
+            assert zbior["levels"][zbior["group_idx"][i]] == df[data.GROUP].iloc[i]
+
+            odtworzone = zbior["X"][i] * zbior["scaler"].std + zbior["scaler"].mean
+            assert odtworzone == pytest.approx(df[data.FEATURES].iloc[i].to_numpy())
 
 
 def test_group_idx_miesci_sie_w_zakresie(zbiory):
@@ -43,7 +63,7 @@ def test_group_idx_miesci_sie_w_zakresie(zbiory):
     (czyli PIERWSZA dzielnica). W obu przypadkach nic nie wybucha, a oferta
     zostaje po cichu przypisana do niewlasciwej dzielnicy.
     """
-    tr, te = zbiory
+    tr, te = zbiory["tr"], zbiory["te"]
     k = len(tr["levels"])
     for zbior in (tr, te):
         assert zbior["group_idx"].min() >= 0
@@ -67,7 +87,7 @@ def test_standaryzacja_nie_przecieka(zbiory):
     obserwowane odchylenie srednich testowych to okolo 0.25.
     """
     
-    tr, te = zbiory
+    tr, te = zbiory["tr"], zbiory["te"]
 
     assert np.allclose(tr["X"].mean(axis=0), 0.0, atol=1e-8)
     assert np.allclose(tr["X"].std(axis=0), 1.0, atol=1e-8)
