@@ -24,19 +24,19 @@ def encode(df, levels=None):
     if levels is None:
         levels = sorted(df[GROUP].unique())
     lookup = {name: i for i, name in enumerate(levels)}
-    #Sprawdzenie czy w przyszlosci po update datasetu nie dojdzie jakas nowa dzielnica w skutku bledu lub zlego zczytania
+    #Catch districts missing from levels - after a dataset update this usually means a data error, not a genuinely new district
     extra = set(df[GROUP]) - set(lookup)
     if extra:
-        raise ValueError(f"Pojawiła się nowa, nieznana dzielnica: {extra}")
+        raise ValueError(f"Unknown district not present in levels: {extra}")
     idx = df[GROUP].map(lookup).to_numpy(dtype=np.int32)
     return idx, list(levels)
 
-def split(df, fraction=0.2, seed=1234, min_ofert=10):
-    #Na wypadek gdyby ktos podal ramke z powtorzonymi etykietami
+def split(df, fraction=0.2, seed=1234, min_offers=10):
+    #In case someone passes a frame with duplicate index labels
     df = df.reset_index(drop=True)
-    #Daje prog 10, tak aby dzielnice gdzie nie ma nawet 10 ofert nie byly przenoszone do datasetu testowego. Obecnie nie wplywa to na zadna dzielnice ale jest to zabezpieczenie na przyszlosc
-    duze = df.groupby(GROUP).filter(lambda x: len(x) >= min_ofert)
-    test = duze.groupby(GROUP).sample(frac=fraction, random_state=seed)
+    #Districts with fewer than 10 listings are kept out of the test set. No district is below the threshold today, but this guards against it as the dataset grows
+    large = df.groupby(GROUP).filter(lambda x: len(x) >= min_offers)
+    test = large.groupby(GROUP).sample(frac=fraction, random_state=seed)
     train = df.drop(test.index)
     return train, test
 
@@ -48,7 +48,7 @@ class Scaler():
     def fit(self, X):
         self.mean = np.mean(X, axis=0)
         self.std = np.std(X, axis=0)
-        # Zera zamieniam na jedynki aby uniknac dzielenia przez zero w transform
+        # Replace zeros with ones so transform never divides by zero
         self.std = np.where(self.std < 1e-8, 1.0, self.std)
 
     def transform(self, X):
@@ -58,7 +58,7 @@ class Scaler():
         self.fit(X)
         return self.transform(X)
 
-    #JSON nie zapisze tablic numpy, więc konwertujemy je na listy przy zapisie i z powrotem przy odczycie
+    #JSON cannot store numpy arrays, so we convert them to lists on save and back on load
     def to_dict(self):
         return {"mean": self.mean.tolist(), "std": self.std.tolist()}
 
@@ -68,7 +68,7 @@ class Scaler():
 
 
 def build(df, levels=None, scaler=None):
-    """Dostaje ramke juz przetworzana przez prepare_dataset i zwraca przygotowane X, y, group_idx, levels, scaler"""
+    """Takes a frame already processed by prepare_dataset and returns X, y, group_idx, levels and scaler"""
     X_raw = df[FEATURES].to_numpy(dtype=np.float64)
     y = df[TARGET].to_numpy(dtype=np.float64)
     group_idx, levels = encode(df, levels)
@@ -79,9 +79,3 @@ def build(df, levels=None, scaler=None):
     X = scaler.transform(X_raw)
 
     return {"X" : X, "y" : y, "group_idx" : group_idx, "levels" : levels, "scaler" : scaler}
-
-
-    
-
-
-
