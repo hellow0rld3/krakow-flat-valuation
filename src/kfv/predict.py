@@ -125,6 +125,30 @@ def podsumowanie_ceny(log_price_draws, kwantyle=(0.05, 0.25, 0.5, 0.75, 0.95)):
     }
 
 
+def premia_dzielnic(artefakty):
+    """Premia lub dyskonto kazdej dzielnicy wzgledem sredniej miasta, w procentach.
+
+    Liczymy exp(alpha - mu) - 1, czyli o ile procent drozsze jest mieszkanie
+    o TYCH SAMYCH cechach w danej dzielnicy niz przecietnie w Krakowie.
+    Odejmowanie na skali log odpowiada dzieleniu na skali zlotowek.
+
+    Zwraca dla kazdej dzielnicy srednia i przedzial 90% - bo sama liczba bez
+    przedzialu nie mowi, czy roznica jest odrozniana od zera.
+    """
+    posterior = artefakty["posterior"]
+    wzgledne = 100.0 * (
+        np.exp(posterior["alpha"] - posterior["mu_miasto"][:, None]) - 1.0
+    )
+    return {
+        nazwa: {
+            "srednia": float(wzgledne[:, k].mean()),
+            "q5": float(np.quantile(wzgledne[:, k], 0.05)),
+            "q95": float(np.quantile(wzgledne[:, k], 0.95)),
+        }
+        for k, nazwa in enumerate(artefakty["levels"])
+    }
+
+
 def wycen(artefakty, dzielnica, metraz_m2, liczba_pokoi, pietro, seed=0):
     """Wycenia jedno mieszkanie. Zwraca oba rodzaje przedzialow.
 
