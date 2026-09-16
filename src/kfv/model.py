@@ -3,55 +3,56 @@ import numpyro.distributions as dist
 
 
 def model(X, group_idx, n_groups, mu_prior_loc, y=None):
-    """Hierarchiczny model hedoniczny wyceny mieszkan.
+    """Hierarchical hedonic model for flat valuation.
 
-        log(cena) ~ StudentT(nu, alpha[dzielnica] + X @ beta, sigma)
-        alpha[k]  = mu + sigma_dzielnica * z[k]        
+        log(price) ~ StudentT(nu, alpha[district] + X @ beta, sigma)
+        alpha[k]   = mu + sigma_district * z[k]
 
-    Argumenty:
-        X            - wystandaryzowane cechy, ksztalt (N, 3)
-        group_idx    - indeks dzielnicy kazdej oferty, ksztalt (N,)
-        n_groups     - liczba dzielnic K (podawana jawnie, a nie liczona
-                       z group_idx - w zbiorze testowym moze nie wystapic
-                       ostatnia dzielnica i K wyszloby za male, przez co
-                       trening i test mialyby rozna liczbe parametrow)
-        mu_prior_loc - srodek priora na mu, czyli srednia log(ceny) w treningu
-        y            - log(ceny); None przy generowaniu danych z modelu
+    Arguments:
+        X            - standardized features, shape (N, 3)
+        group_idx    - district index of every listing, shape (N,)
+        n_groups     - number of districts K (passed explicitly instead of being
+                       derived from group_idx - the last district may be absent
+                       from the test set, K would come out too small and train
+                       and test would end up with a different number of parameters)
+        mu_prior_loc - center of the prior on mu, i.e. mean log(price) in training
+        y            - log(price); None when generating data from the model
 
-    Model nie wie nic o plikach ani ramkach pandas - przyjmuje gotowe tablice.
-    Dzieki temu mozna go nakarmic danymi syntetycznymi w tescie odzyskiwania
-    parametrow.
+    The model knows nothing about files or pandas frames - it takes ready arrays.
+    That is what makes it possible to feed it synthetic data in the parameter
+    recovery test.
     """
     n_obs, n_features = X.shape
 
-    # poziom miasta (hiperpriory)
-    mu = numpyro.sample("mu_miasto", dist.Normal(mu_prior_loc, 1.0))
-    sigma_dzielnica = numpyro.sample("sigma_dzielnica", dist.HalfNormal(0.5))
+    # city level (hyperpriors)
+    mu = numpyro.sample("mu_city", dist.Normal(mu_prior_loc, 1.0))
+    sigma_district = numpyro.sample("sigma_district", dist.HalfNormal(0.5))
 
-    # poziom dzielnicy, parametryzacja niecentrowana
-    # z ma rozklad N(0,1) NIEZALEZNIE od sigma_dzielnica, co rozprzega oba
-    # poziomy hierarchi i zabezpiecza na wypadek rzadkich grup i pojawienia
-    # sie lejka Neala, mimo że centrowana radzi sobie równie dobrze
-    with numpyro.plate("dzielnice", n_groups):
-        z = numpyro.sample("z_dzielnica", dist.Normal(0.0, 1.0))
+    # district level, non-centered parameterization
+    # z is N(0,1) regardless of sigma_district, which decouples the two levels
+    # of the hierarchy and guards against sparse groups and Neal's funnel,
+    # even though the centered version does just as well here
+    with numpyro.plate("districts", n_groups):
+        z = numpyro.sample("z_district", dist.Normal(0.0, 1.0))
 
-    # efekty cech (predyktory sa wystandaryzowane)
-    with numpyro.plate("cechy", n_features):
+    # feature effects (predictors are standardized)
+    with numpyro.plate("features", n_features):
         beta = numpyro.sample("beta", dist.Normal(0.0, 1.0))
 
-    # szum obserwacyjny
+    # observation noise
     sigma = numpyro.sample("sigma", dist.HalfNormal(0.5))
-    # Student zamiast rozkladu normalnego: nu uczone z danych decyduje,
-    # ile wagi dac ofertom skrajnym, zamiast wycinac je recznie.
+    # Student instead of a normal distribution: nu is learned from the data and
+    # decides how much weight to give extreme listings, instead of cutting them
+    # out by hand.
     nu = numpyro.sample("nu", dist.Gamma(2.0, 0.1))
 
-    alpha = mu + sigma_dzielnica * z            # (K,)
-    # deterministic zapisuje alpha w wynikach MCMC, mimo ze nie jest to
-    # parametr probkowany - dzieki temu predykcja nie musi go przeliczac.
+    alpha = mu + sigma_district * z             # (K,)
+    # deterministic keeps alpha in the MCMC output even though it is not a
+    # sampled parameter - thanks to that prediction does not recompute it.
     numpyro.deterministic("alpha", alpha)
 
     mu_obs = alpha[group_idx] + X @ beta        # (N,)
 
-    # N bierzemy z X, a nie z len(y) bo przy generowaniu danych y jest None.
-    with numpyro.plate("oferty", n_obs):
+    # N comes from X, not from len(y), because y is None when generating data.
+    with numpyro.plate("listings", n_obs):
         numpyro.sample("y", dist.StudentT(nu, mu_obs, sigma), obs=y)

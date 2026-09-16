@@ -92,8 +92,8 @@ def predictive_log_price(artefakty, X_raw, group_idx, include_noise=True, seed=0
         rng = np.random.default_rng(seed)
         z_nowe = rng.standard_normal((n_probek, int((~znane).sum())))
         alpha_obs[:, ~znane] = (
-            posterior["mu_miasto"][:, None]
-            + posterior["sigma_dzielnica"][:, None] * z_nowe
+            posterior["mu_city"][:, None]
+            + posterior["sigma_district"][:, None] * z_nowe
         )
 
     # X @ beta.T daje (N, S), wiec transponujemy do (S, N)
@@ -137,7 +137,7 @@ def premia_dzielnic(artefakty):
     """
     posterior = artefakty["posterior"]
     wzgledne = 100.0 * (
-        np.exp(posterior["alpha"] - posterior["mu_miasto"][:, None]) - 1.0
+        np.exp(posterior["alpha"] - posterior["mu_city"][:, None]) - 1.0
     )
     return {
         nazwa: {

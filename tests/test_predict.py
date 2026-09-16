@@ -34,8 +34,8 @@ def artefakty(features, beta, sigma=0.1, sigma_dzielnica=0.5):
         "posterior": {
             "alpha": np.tile(ALPHA, (S, 1)),
             "beta": np.tile(np.asarray(beta, dtype=float), (S, 1)),
-            "mu_miasto": np.full(S, ALPHA.mean()),
-            "sigma_dzielnica": np.full(S, sigma_dzielnica),
+            "mu_city": np.full(S, ALPHA.mean()),
+            "sigma_district": np.full(S, sigma_dzielnica),
             "sigma": np.full(S, sigma),
             "nu": np.full(S, 5.0),
         },

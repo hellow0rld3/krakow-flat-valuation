@@ -117,7 +117,7 @@ def cmd_summary(args):
     print("  (wzrost metrazu o 1% zmienia cene o tyle procent)")
 
     _naglowek("Poziom miasta")
-    mu, tau, sig = post["mu_miasto"], post["sigma_dzielnica"], post["sigma"]
+    mu, tau, sig = post["mu_city"], post["sigma_district"], post["sigma"]
     print(f"  mu_miasto        {mu.mean():.3f} log-pln  (~{np.exp(mu.mean()):,.0f} zl)")
     print(f"  sigma_dzielnica  {tau.mean():.3f}  => rozrzut miedzy dzielnicami "
           f"~{100 * (np.exp(tau.mean()) - 1):.0f}%")

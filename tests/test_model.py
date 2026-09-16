@@ -37,9 +37,9 @@ _z -= _z.mean()
 # z ktorych odzyskanie parametrow bywa trudne. Test przechodzilby wtedy raz na
 # jakis czas, a test niestabilny jest gorszy niz brak testu.
 PRAWDA = {
-    "mu_miasto": 13.5,
-    "sigma_dzielnica": 0.15,
-    "z_dzielnica": _z,
+    "mu_city": 13.5,
+    "sigma_district": 0.15,
+    "z_district": _z,
     "beta": np.array([0.90, 0.02, -0.01]),
     "sigma": 0.15,
     "nu": 5.0,
@@ -57,7 +57,7 @@ def posterior():
     group_idx = _rng.integers(0, N_GROUPS, size=N_OBS)
 
     wejscie = dict(X=X, group_idx=group_idx,
-                   n_groups=N_GROUPS, mu_prior_loc=PRAWDA["mu_miasto"])
+                   n_groups=N_GROUPS, mu_prior_loc=PRAWDA["mu_city"])
 
     # condition podstawia zadane wartosci zamiast losowac je z priorow, wiec y
     # powstaje DOKLADNIE przy parametrach z PRAWDA. Generatorem jest ta sama
