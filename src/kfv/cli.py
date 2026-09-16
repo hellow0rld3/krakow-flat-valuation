@@ -50,7 +50,7 @@ def cmd_fit(args):
     print(f"  najmniejszy ESS   {diag['min_ess']:.0f}  ({diag['min_ess_param']})")
     print(f"  dywergencje       {diag['divergences']}")
 
-    if inference.zbiegly(diag):
+    if inference.converged(diag):
         print("  -> wyniki mozna interpretowac")
     else:
         print("  -> UWAGA: lancuchy nie zbiegly. Zwieksz --warmup/--samples "
@@ -63,7 +63,7 @@ def cmd_fit(args):
         wynik = None
 
     katalog = inference.save(mcmc, zbior, args.artifacts,
-                             dodatkowe={"ocena_testowa": wynik})
+                             extra={"ocena_testowa": wynik})
     print(f"\nZapisano artefakty do {katalog}")
 
 

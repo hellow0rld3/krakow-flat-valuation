@@ -1,13 +1,12 @@
-"""Uruchomienie MCMC i zapis/odczyt artefaktow.
+"""Running MCMC and saving/loading artifacts.
 
-Ten modul rozdziela dwa etapy o zupelnie roznym koszcie:
+This module separates two stages with very different costs:
 
-    fit()   - wolny (sekundy), odpalany raz na jakis czas
-    load()  - natychmiastowy, odpalany przy kazdej wycenie
+    fit()   - slow (seconds), run once in a while
+    load()  - instant, run on every valuation
 
-Dzieki temu predykcja nie musi powtarzac MCMC - wystarczy jej zapisany
-posterior. To ten sam podzial, co w produkcyjnym ML: trening offline,
-serwowanie online.
+Thanks to that prediction never repeats MCMC, the saved posterior is enough.
+It is the same split as in production ML: training offline, serving online.
 """
 import json
 from pathlib import Path
@@ -25,15 +24,15 @@ POSTERIOR_FILE = "posterior.npz"
 META_FILE = "meta.json"
 
 
-def fit(zbior, num_warmup=1000, num_samples=1000, num_chains=4, seed=0):
-    """Dopasowuje model do danych metoda NUTS.
+def fit(dataset, num_warmup=1000, num_samples=1000, num_chains=4, seed=0):
+    """Fits the model to the data with NUTS.
 
-    Argumentem jest slownik z data.build(). mu_prior_loc liczymy tutaj jako
-    srednia log(ceny) w treningu - model sam tego nie robi, bo nie wolno mu
-    znac danych.
+    Takes the dictionary from data.build(). We compute mu_prior_loc here as the
+    mean log(price) in training - the model does not do it itself, because it is
+    not allowed to know the data.
 
-    Zwraca obiekt MCMC (a nie same probki), bo niesie tez statystyki samplera
-    potrzebne do diagnostyki.
+    Returns the MCMC object rather than the samples alone, because it also
+    carries the sampler statistics needed for diagnostics.
     """
     mcmc = MCMC(
         NUTS(model),
@@ -44,109 +43,109 @@ def fit(zbior, num_warmup=1000, num_samples=1000, num_chains=4, seed=0):
     )
     mcmc.run(
         jax.random.PRNGKey(seed),
-        X=zbior["X"],
-        group_idx=zbior["group_idx"],
-        n_groups=len(zbior["levels"]),
-        mu_prior_loc=float(np.mean(zbior["y"])),
-        y=zbior["y"],
+        X=dataset["X"],
+        group_idx=dataset["group_idx"],
+        n_groups=len(dataset["levels"]),
+        mu_prior_loc=float(np.mean(dataset["y"])),
+        y=dataset["y"],
     )
     return mcmc
 
 
 def diagnostics(mcmc):
-    """Zwraca najgorszy R-hat, najmniejszy ESS i liczbe dywergencji.
+    """Returns the worst R-hat, the lowest ESS and the number of divergences.
 
-    Patrzymy na NAJGORSZA wartosc w calym zestawie parametrow, a nie na
-    srednia: jeden parametr, ktory nie zbiegl, unieważnia caly wynik.
+    We look at the worst value across all parameters rather than at an average:
+    a single parameter that has not converged invalidates the whole result.
     """
-    probki = mcmc.get_samples(group_by_chain=True)
+    samples = mcmc.get_samples(group_by_chain=True)
 
-    najgorszy_rhat, parametr_rhat = 0.0, None
-    najmniejszy_ess, parametr_ess = np.inf, None
+    worst_rhat, worst_rhat_param = 0.0, None
+    lowest_ess, lowest_ess_param = np.inf, None
 
-    for nazwa, wartosci in probki.items():
-        wartosci = np.asarray(wartosci)
-        rhat = float(np.max(diag.gelman_rubin(wartosci)))
-        ess = float(np.min(diag.effective_sample_size(wartosci)))
-        if rhat > najgorszy_rhat:
-            najgorszy_rhat, parametr_rhat = rhat, nazwa
-        if ess < najmniejszy_ess:
-            najmniejszy_ess, parametr_ess = ess, nazwa
+    for name, values in samples.items():
+        values = np.asarray(values)
+        rhat = float(np.max(diag.gelman_rubin(values)))
+        ess = float(np.min(diag.effective_sample_size(values)))
+        if rhat > worst_rhat:
+            worst_rhat, worst_rhat_param = rhat, name
+        if ess < lowest_ess:
+            lowest_ess, lowest_ess_param = ess, name
 
     return {
-        "max_rhat": najgorszy_rhat,
-        "max_rhat_param": parametr_rhat,
-        "min_ess": najmniejszy_ess,
-        "min_ess_param": parametr_ess,
+        "max_rhat": worst_rhat,
+        "max_rhat_param": worst_rhat_param,
+        "min_ess": lowest_ess,
+        "min_ess_param": lowest_ess_param,
         "divergences": int(np.sum(mcmc.get_extra_fields()["diverging"])),
     }
 
 
-def zbiegly(diag_wynik, prog_rhat=1.01, prog_ess=400):
-    """Czy wyniki wolno interpretowac?
+def converged(diag_result, rhat_threshold=1.01, ess_threshold=400):
+    """Are the results safe to interpret?
 
-    Trzy warunki naraz - kazdy wychwytuje inny rodzaj awarii:
-      R-hat      - lancuchy nie zgadzaja sie ze soba,
-      ESS        - probki zbyt skorelowane, estymaty niestabilne,
-      dywergencje- sampler omija czesc przestrzeni, probki obciazone.
+    Three conditions at once - each catches a different kind of failure:
+      R-hat       - the chains do not agree with each other,
+      ESS         - samples too correlated, estimates unstable,
+      divergences - the sampler avoids part of the space, samples are biased.
     """
     return (
-        diag_wynik["max_rhat"] < prog_rhat
-        and diag_wynik["min_ess"] > prog_ess
-        and diag_wynik["divergences"] == 0
+        diag_result["max_rhat"] < rhat_threshold
+        and diag_result["min_ess"] > ess_threshold
+        and diag_result["divergences"] == 0
     )
 
 
-def save(mcmc, zbior, katalog=None, dodatkowe=None):
-    """Zapisuje posterior i wszystko, czego potrzebuje pozniejsza wycena.
+def save(mcmc, dataset, directory=None, extra=None):
+    """Saves the posterior and everything a later valuation needs.
 
-    Sam posterior nie wystarczy. Bez `levels` nie wiadomo, ktory efekt dotyczy
-    Krowodrzy; bez parametrow Scalera nie da sie przeliczyc metrazu nowego
-    mieszkania na te sama skale; bez FEATURES nie wiadomo, w jakiej kolejnosci
-    ulozyc cechy.
+    The posterior alone is not enough. Without `levels` there is no telling which
+    effect belongs to Krowodrza; without the Scaler parameters there is no way to
+    put the area of a new flat on the same scale; without FEATURES there is no
+    telling in which order to lay out the features.
 
-    npz + json zamiast jednego pliku binarnego: metadane mozna podejrzec
-    zwyklym edytorem, bez zadnych bibliotek.
+    npz + json instead of a single binary file: the metadata can be inspected in
+    any text editor, without any libraries.
     """
-    katalog = Path(katalog) if katalog else DEFAULT_ARTIFACTS
-    katalog.mkdir(parents=True, exist_ok=True)
+    directory = Path(directory) if directory else DEFAULT_ARTIFACTS
+    directory.mkdir(parents=True, exist_ok=True)
 
-    # laczymy lancuchy w jeden wymiar probek: (chains, draws, ...) -> (S, ...)
-    probki = {k: np.asarray(v) for k, v in mcmc.get_samples().items()}
-    np.savez_compressed(katalog / POSTERIOR_FILE, **probki)
+    # chains are merged into one sample dimension: (chains, draws, ...) -> (S, ...)
+    samples = {k: np.asarray(v) for k, v in mcmc.get_samples().items()}
+    np.savez_compressed(directory / POSTERIOR_FILE, **samples)
 
     meta = {
         "features": FEATURES,
-        "levels": zbior["levels"],
-        "scaler": zbior["scaler"].to_dict(),
-        "mu_prior_loc": float(np.mean(zbior["y"])),
-        "n_train": int(len(zbior["y"])),
+        "levels": dataset["levels"],
+        "scaler": dataset["scaler"].to_dict(),
+        "mu_prior_loc": float(np.mean(dataset["y"])),
+        "n_train": int(len(dataset["y"])),
         "diagnostics": diagnostics(mcmc),
     }
-    if dodatkowe:
-        meta.update(dodatkowe)
+    if extra:
+        meta.update(extra)
 
-    (katalog / META_FILE).write_text(
+    (directory / META_FILE).write_text(
         json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8"
     )
-    return katalog
+    return directory
 
 
-def load(katalog=None):
-    """Wczytuje artefakty zapisane przez save().
+def load(directory=None):
+    """Loads the artifacts written by save().
 
-    Scaler odtwarzamy tu od razu jako gotowy obiekt, zeby wywolujacy nie musial
-    pamietac, ze w JSON-ie leza zwykle listy, a nie tablice numpy.
+    We rebuild the Scaler here as a ready object, so that the caller does not
+    have to remember that the JSON holds plain lists rather than numpy arrays.
     """
-    katalog = Path(katalog) if katalog else DEFAULT_ARTIFACTS
-    sciezka_posterior = katalog / POSTERIOR_FILE
+    directory = Path(directory) if directory else DEFAULT_ARTIFACTS
+    posterior_path = directory / POSTERIOR_FILE
 
-    if not sciezka_posterior.is_file():
+    if not posterior_path.is_file():
         raise FileNotFoundError(
-            f"Brak artefaktow w {katalog}. Uruchom najpierw dopasowanie modelu."
+            f"No artifacts in {directory}. Fit the model first."
         )
 
-    posterior = dict(np.load(sciezka_posterior))
-    meta = json.loads((katalog / META_FILE).read_text(encoding="utf-8"))
+    posterior = dict(np.load(posterior_path))
+    meta = json.loads((directory / META_FILE).read_text(encoding="utf-8"))
     meta["scaler"] = Scaler.from_dict(meta["scaler"])
     return {"posterior": posterior, **meta}
