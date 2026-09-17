@@ -1,14 +1,13 @@
-"""Interfejs terminalowy.
+"""Terminal interface.
 
     python -m kfv.cli fit
     python -m kfv.cli summary
-    python -m kfv.cli predict --dzielnica Krowodrza --metraz 55 --pokoje 3 --pietro 2
+    python -m kfv.cli predict --district Krowodrza --area 55 --rooms 3 --floor 2
 
-Ten modul NIE zawiera logiki - tylko parsuje argumenty, wola funkcje z
-pozostalych modulow i formatuje wynik. Dzieki temu cala funkcjonalnosc da sie
-przetestowac bez uruchamiania CLI, a pozniejsze dolozenie interfejsu webowego
-bedzie dopisaniem drugiego cienkiego adaptera obok, a nie przepisywaniem
-projektu.
+This module holds no logic - it only parses arguments, calls functions from the
+other modules and formats the result. Thanks to that the whole functionality can
+be tested without running the CLI, and adding a web interface later will mean
+writing a second thin adapter next to this one, not rewriting the project.
 """
 import argparse
 
@@ -18,79 +17,80 @@ import numpyro
 from kfv import data, evaluate, inference, predict
 
 
-def _naglowek(tekst):
-    print(f"\n{tekst}")
-    print("-" * len(tekst))
+def _header(text):
+    print(f"\n{text}")
+    print("-" * len(text))
 
 
 # --------------------------------------------------------------------------- #
 #  fit
 # --------------------------------------------------------------------------- #
 def cmd_fit(args):
-    # Musi byc PRZED pierwszym uzyciem jax, inaczej lancuchy policza sie po
-    # kolei zamiast rownolegle (samo importowanie jax jeszcze nie inicjalizuje
-    # urzadzen, wiec to miejsce jest bezpieczne).
+    # Has to come before the first use of jax, otherwise the chains will run one
+    # after another instead of in parallel (importing jax does not initialize
+    # the devices yet, so this place is safe).
     numpyro.set_host_device_count(args.chains)
 
     df = data.prepare_dataset(data.load_data(args.data))
     train, test = data.split(df, seed=args.seed)
-    zbior = data.build(train)
+    dataset = data.build(train)
 
-    print(f"Dane: {len(train)} treningowych / {len(test)} testowych, "
-          f"{len(zbior['levels'])} dzielnic")
-    print(f"Probkowanie: {args.chains} lancuchy x {args.samples} probek "
-          f"(+{args.warmup} rozgrzewki)...")
+    print(f"Data: {len(train)} training / {len(test)} test, "
+          f"{len(dataset['levels'])} districts")
+    print(f"Sampling: {args.chains} chains x {args.samples} samples "
+          f"(+{args.warmup} warmup)...")
 
-    mcmc = inference.fit(zbior, num_warmup=args.warmup, num_samples=args.samples,
+    mcmc = inference.fit(dataset, num_warmup=args.warmup, num_samples=args.samples,
                          num_chains=args.chains, seed=args.seed)
 
     diag = inference.diagnostics(mcmc)
-    _naglowek("Diagnostyka zbieznosci")
-    print(f"  najgorszy R-hat   {diag['max_rhat']:.4f}  ({diag['max_rhat_param']})")
-    print(f"  najmniejszy ESS   {diag['min_ess']:.0f}  ({diag['min_ess_param']})")
-    print(f"  dywergencje       {diag['divergences']}")
+    _header("Convergence diagnostics")
+    print(f"  worst R-hat   {diag['max_rhat']:.4f}  ({diag['max_rhat_param']})")
+    print(f"  lowest ESS    {diag['min_ess']:.0f}  ({diag['min_ess_param']})")
+    print(f"  divergences   {diag['divergences']}")
 
     if inference.converged(diag):
-        print("  -> wyniki mozna interpretowac")
+        print("  -> the results can be interpreted")
     else:
-        print("  -> UWAGA: lancuchy nie zbiegly. Zwieksz --warmup/--samples "
-              "przed interpretacja wynikow.")
+        print("  -> warning: the chains have not converged. Increase "
+              "--warmup/--samples before interpreting the results.")
 
     if len(test) > 0:
-        wynik = evaluate.evaluate_on(artefakty_z_pamieci(mcmc, zbior), test)
-        _wypisz_ocene(wynik)
+        result = evaluate.evaluate_on(artifacts_in_memory(mcmc, dataset), test)
+        _print_evaluation(result)
     else:
-        wynik = None
+        result = None
 
-    katalog = inference.save(mcmc, zbior, args.artifacts,
-                             extra={"ocena_testowa": wynik})
-    print(f"\nZapisano artefakty do {katalog}")
+    directory = inference.save(mcmc, dataset, args.artifacts,
+                               extra={"test_evaluation": result})
+    print(f"\nSaved the artifacts to {directory}")
 
 
-def artefakty_z_pamieci(mcmc, zbior):
-    """Sklada strukture artefaktow bez zapisu na dysk.
+def artifacts_in_memory(mcmc, dataset):
+    """Assembles the artifact structure without writing to disk.
 
-    Potrzebne, bo ocene chcemy wypisac PRZED zapisem - gdyby model nie zbiegl,
-    wolimy o tym wiedziec, zanim nadpiszemy poprzednie wyniki.
+    Needed because we want to print the evaluation before saving - if the model
+    had not converged, we would rather know about it before overwriting the
+    previous results.
     """
     return {
         "posterior": {k: np.asarray(v) for k, v in mcmc.get_samples().items()},
-        "levels": zbior["levels"],
-        "scaler": zbior["scaler"],
+        "levels": dataset["levels"],
+        "scaler": dataset["scaler"],
         "features": data.FEATURES,
     }
 
 
-def _wypisz_ocene(wynik):
-    _naglowek(f"Ocena na zbiorze testowym ({wynik['n']} ofert)")
-    print(f"  MAPE              {100 * wynik['MAPE']:>6.1f}%")
-    print(f"  mediana bledu     {100 * wynik['median_error']:>6.1f}%")
-    print(f"  RMSE              {wynik['RMSE_pln']:>9,.0f} zl")
-    print("\n  Kalibracja (im blizej nominalnego, tym lepiej):")
-    print(f"  {'nominalnie':>12}{'empirycznie':>14}{'sr. szerokosc':>17}")
-    for k in wynik["calibration"]:
+def _print_evaluation(result):
+    _header(f"Evaluation on the test set ({result['n']} listings)")
+    print(f"  MAPE              {100 * result['MAPE']:>6.1f}%")
+    print(f"  median error      {100 * result['median_error']:>6.1f}%")
+    print(f"  RMSE              {result['RMSE_pln']:>9,.0f} PLN")
+    print("\n  Calibration (the closer to nominal, the better):")
+    print(f"  {'nominal':>12}{'empirical':>14}{'mean width':>20}")
+    for k in result["calibration"]:
         print(f"  {100 * k['level']:>11.0f}%{100 * k['coverage']:>13.1f}%"
-              f"{k['mean_width_pln']:>16,.0f} zl")
+              f"{k['mean_width_pln']:>16,.0f} PLN")
 
 
 # --------------------------------------------------------------------------- #
@@ -101,39 +101,41 @@ def cmd_summary(args):
     post = art["posterior"]
     scaler = art["scaler"]
 
-    _naglowek("Wplyw cech na cene")
-    print("  (beta dotyczy cech wystandaryzowanych: efekt zmiany o 1 odchylenie)")
-    for i, cecha in enumerate(art["features"]):
+    _header("Effect of the features on the price")
+    print("  (beta refers to standardized features: the effect of a change by "
+          "one standard deviation)")
+    for i, feature in enumerate(art["features"]):
         b = post["beta"][:, i]
-        print(f"  {cecha:<16} {b.mean():+.3f}  [{np.quantile(b, 0.05):+.3f}, "
-              f"{np.quantile(b, 0.95):+.3f}]   => {100 * (np.exp(b.mean()) - 1):+.1f}% ceny")
+        print(f"  {feature:<16} {b.mean():+.3f}  [{np.quantile(b, 0.05):+.3f}, "
+              f"{np.quantile(b, 0.95):+.3f}]   => {100 * (np.exp(b.mean()) - 1):+.1f}% of the price")
 
-    # Elastycznosc: beta liczy sie na cechach podzielonych przez odchylenie,
-    # wiec zeby wrocic do "% ceny na % metrazu", trzeba przez nie przemnozyc.
-    i_metraz = art["features"].index("log_metraz_m2")
-    elastycznosc = post["beta"][:, i_metraz] / scaler.std[i_metraz]
-    print(f"\n  Elastycznosc wzgledem metrazu: {elastycznosc.mean():.3f} "
-          f"[{np.quantile(elastycznosc, 0.05):.3f}, {np.quantile(elastycznosc, 0.95):.3f}]")
-    print("  (wzrost metrazu o 1% zmienia cene o tyle procent)")
+    # Elasticity: beta is computed on features divided by the standard
+    # deviation, so to get back to "% of price per % of area" we have to
+    # multiply by it.
+    i_area = art["features"].index("log_metraz_m2")
+    elasticity = post["beta"][:, i_area] / scaler.std[i_area]
+    print(f"\n  Elasticity with respect to area: {elasticity.mean():.3f} "
+          f"[{np.quantile(elasticity, 0.05):.3f}, {np.quantile(elasticity, 0.95):.3f}]")
+    print("  (a 1% increase in area changes the price by that many percent)")
 
-    _naglowek("Poziom miasta")
+    _header("City level")
     mu, tau, sig = post["mu_city"], post["sigma_district"], post["sigma"]
-    print(f"  mu_miasto        {mu.mean():.3f} log-pln  (~{np.exp(mu.mean()):,.0f} zl)")
-    print(f"  sigma_dzielnica  {tau.mean():.3f}  => rozrzut miedzy dzielnicami "
+    print(f"  mu_city          {mu.mean():.3f} log-pln  (~{np.exp(mu.mean()):,.0f} PLN)")
+    print(f"  sigma_district   {tau.mean():.3f}  => spread between districts "
           f"~{100 * (np.exp(tau.mean()) - 1):.0f}%")
-    print(f"  sigma            {sig.mean():.3f}  => rozrzut ofert o tych samych "
-          f"cechach ~{100 * (np.exp(sig.mean()) - 1):.0f}%")
-    print(f"  nu               {post['nu'].mean():.1f}  (male = ciezkie ogony)")
+    print(f"  sigma            {sig.mean():.3f}  => spread of listings with the "
+          f"same features ~{100 * (np.exp(sig.mean()) - 1):.0f}%")
+    print(f"  nu               {post['nu'].mean():.1f}  (small = heavy tails)")
 
-    _naglowek("Dzielnice wzgledem sredniej Krakowa")
-    premie = predict.district_premiums(art)
-    print(f"  {'dzielnica':<28}{'efekt':>8}{'90% CI':>22}")
-    for nazwa, v in sorted(premie.items(), key=lambda x: -x[1]["mean"]):
+    _header("Districts against the Krakow average")
+    premiums = predict.district_premiums(art)
+    print(f"  {'district':<28}{'effect':>8}{'90% CI':>22}")
+    for name, v in sorted(premiums.items(), key=lambda x: -x[1]["mean"]):
         ci = f"[{v['q5']:+.1f}%, {v['q95']:+.1f}%]"
-        print(f"  {nazwa:<28}{v['mean']:>+7.1f}%{ci:>22}")
+        print(f"  {name:<28}{v['mean']:>+7.1f}%{ci:>22}")
 
-    if art.get("ocena_testowa"):
-        _wypisz_ocene(art["ocena_testowa"])
+    if art.get("test_evaluation"):
+        _print_evaluation(art["test_evaluation"])
 
 
 # --------------------------------------------------------------------------- #
@@ -142,64 +144,64 @@ def cmd_summary(args):
 def cmd_predict(args):
     art = inference.load(args.artifacts)
 
-    if args.list_dzielnice:
-        print("Dzielnice znane modelowi:")
-        for nazwa in art["levels"]:
-            print(f"  {nazwa}")
+    if args.list_districts:
+        print("Districts known to the model:")
+        for name in art["levels"]:
+            print(f"  {name}")
         return
 
-    if not args.dzielnica:
-        raise SystemExit("Podaj --dzielnica (lista: --list-dzielnice)")
+    if not args.district:
+        raise SystemExit("Give --district (for a list: --list-districts)")
 
-    w = predict.value_flat(art, args.dzielnica, args.metraz, args.pokoje, args.pietro)
+    w = predict.value_flat(art, args.district, args.area, args.rooms, args.floor)
 
     if not w["known_district"]:
-        print(f"UWAGA: '{args.dzielnica}' nie wystepuje w danych treningowych.")
-        print("       Model uzyje rozkladu populacyjnego dzielnic - przedzial "
-              "bedzie szerszy.\n")
+        print(f"Warning: '{args.district}' does not appear in the training data.")
+        print("         The model will fall back on the population distribution "
+              "of districts - the interval will be wider.\n")
 
-    _naglowek(f"{args.dzielnica} | {args.metraz:g} m2 | {args.pokoje} pok. "
-              f"| pietro {args.pietro}")
-    print(f"  Wycena (mediana)      {w['listing']['median']:>12,.0f} zl"
-          f"   ({w['listing']['median'] / args.metraz:,.0f} zl/m2)")
-    print(f"  Przedzial 50%         {w['listing']['q25']:>12,.0f} - "
-          f"{w['listing']['q75']:,.0f} zl")
-    print(f"  Przedzial 90%         {w['listing']['q5']:>12,.0f} - "
-          f"{w['listing']['q95']:,.0f} zl")
-    print(f"\n  Dla porownania - niepewnosc SREDNIEJ w tym segmencie (90%):")
+    _header(f"{args.district} | {args.area:g} m2 | {args.rooms} rooms "
+            f"| floor {args.floor}")
+    print(f"  Valuation (median)    {w['listing']['median']:>12,.0f} PLN"
+          f"   ({w['listing']['median'] / args.area:,.0f} PLN/m2)")
+    print(f"  50% interval          {w['listing']['q25']:>12,.0f} - "
+          f"{w['listing']['q75']:,.0f} PLN")
+    print(f"  90% interval          {w['listing']['q5']:>12,.0f} - "
+          f"{w['listing']['q95']:,.0f} PLN")
+    print("\n  For comparison - uncertainty about the average in this segment (90%):")
     print(f"                        {w['segment']['q5']:>12,.0f} - "
-          f"{w['segment']['q95']:,.0f} zl")
-    print("  Wezszy przedzial to niewiedza modelu; szerszy zawiera dodatkowo")
-    print("  naturalny rozrzut miedzy konkretnymi ofertami.")
+          f"{w['segment']['q95']:,.0f} PLN")
+    print("  The narrower interval is what the model does not know; the wider one")
+    print("  also covers the natural spread between individual listings.")
 
 
 # --------------------------------------------------------------------------- #
 def build_parser():
     p = argparse.ArgumentParser(
         prog="kfv",
-        description="Bayesowski silnik wyceny mieszkan w Krakowie")
+        description="Bayesian flat valuation engine for Krakow")
     p.add_argument("--artifacts", default=None,
-                   help="katalog z artefaktami (domyslnie artifacts/)")
+                   help="directory with the artifacts (artifacts/ by default)")
     sub = p.add_subparsers(dest="command", required=True)
 
-    f = sub.add_parser("fit", help="dopasowanie modelu metoda MCMC")
-    f.add_argument("--data", default=None, help="sciezka do krakow.csv")
+    f = sub.add_parser("fit", help="fit the model with MCMC")
+    f.add_argument("--data", default=None, help="path to krakow.csv")
     f.add_argument("--warmup", type=int, default=1000)
     f.add_argument("--samples", type=int, default=1000)
     f.add_argument("--chains", type=int, default=4)
     f.add_argument("--seed", type=int, default=0)
     f.set_defaults(func=cmd_fit)
 
-    s = sub.add_parser("summary", help="czego nauczyl sie model")
+    s = sub.add_parser("summary", help="what the model has learned")
     s.set_defaults(func=cmd_summary)
 
-    pr = sub.add_parser("predict", help="wycena jednego mieszkania")
-    pr.add_argument("--dzielnica", default="")
-    pr.add_argument("--metraz", type=float, default=50.0)
-    pr.add_argument("--pokoje", type=int, default=2)
-    pr.add_argument("--pietro", type=int, default=2)
-    pr.add_argument("--list-dzielnice", action="store_true",
-                    help="wypisz dzielnice znane modelowi")
+    pr = sub.add_parser("predict", help="valuation of a single flat")
+    pr.add_argument("--district", default="")
+    pr.add_argument("--area", type=float, default=50.0)
+    pr.add_argument("--rooms", type=int, default=2)
+    pr.add_argument("--floor", type=int, default=2)
+    pr.add_argument("--list-districts", action="store_true",
+                    help="list the districts known to the model")
     pr.set_defaults(func=cmd_predict)
 
     return p
@@ -210,8 +212,8 @@ def main(argv=None):
     try:
         args.func(args)
     except FileNotFoundError as e:
-        # Brak danych albo artefaktow to normalna sytuacja uzytkownika, a nie
-        # awaria programu - pokazujemy komunikat zamiast sladu stosu.
+        # Missing data or artifacts is a normal situation for the user, not a
+        # crash of the program - we show a message instead of a stack trace.
         raise SystemExit(str(e))
 
 
