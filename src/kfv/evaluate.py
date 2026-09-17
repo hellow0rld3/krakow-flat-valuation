@@ -30,13 +30,13 @@ def przygotuj_wejscie(artefakty, df):
     Cechy bierzemy w kolejnosci z artefaktow (a nie z data.FEATURES), bo to
     zapisany model dyktuje, ktora pozycja wektora odpowiada ktorej wadze beta.
 
-    Dzielnice mapujemy przez predict.indeks_dzielnicy, wiec nieznana dzielnica
+    Dzielnice mapujemy przez predict.district_index, wiec nieznana dzielnica
     dostanie -1 zamiast wyjatku. W ocenie modelu to poprawne zachowanie:
     chcemy wiedziec, jak radzi sobie takze tam, gdzie nie mial danych.
     """
     X_raw = df[artefakty["features"]].to_numpy(dtype=np.float64)
     group_idx = np.array(
-        [predict.indeks_dzielnicy(d, artefakty["levels"]) for d in df[GROUP]],
+        [predict.district_index(d, artefakty["levels"]) for d in df[GROUP]],
         dtype=np.int32,
     )
     y_log = df[TARGET].to_numpy(dtype=np.float64)

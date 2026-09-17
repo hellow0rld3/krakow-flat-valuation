@@ -58,19 +58,19 @@ def test_kolejnosc_cech_pochodzi_z_artefaktow():
     cesze. Zmieniamy tylko kolejnosc listy features i sprawdzamy, ze efekt
     przenosi sie na inna wielkosc.
     """
-    mieszkanie = dict(dzielnica="Tania", metraz_m2=50, liczba_pokoi=3, pietro=7)
+    mieszkanie = dict(district="Tania", area_m2=50, rooms=3, floor=7)
 
     # wariant A: druga cecha to pietro  -> oczekujemy alpha + 7
-    a = predict.wycen(
+    a = predict.value_flat(
         artefakty(["log_metraz_m2", "pietro", "liczba_pokoi"], [0.0, 1.0, 0.0]),
         **mieszkanie)
     # wariant B: druga cecha to liczba pokoi -> oczekujemy alpha + 3
-    b = predict.wycen(
+    b = predict.value_flat(
         artefakty(["log_metraz_m2", "liczba_pokoi", "pietro"], [0.0, 1.0, 0.0]),
         **mieszkanie)
 
-    assert np.log(a["segment"]["mediana"]) == pytest.approx(13.0 + 7.0, abs=1e-6)
-    assert np.log(b["segment"]["mediana"]) == pytest.approx(13.0 + 3.0, abs=1e-6)
+    assert np.log(a["segment"]["median"]) == pytest.approx(13.0 + 7.0, abs=1e-6)
+    assert np.log(b["segment"]["median"]) == pytest.approx(13.0 + 3.0, abs=1e-6)
 
 
 def test_znana_dzielnica_uzywa_wlasciwego_alpha():
@@ -82,9 +82,9 @@ def test_znana_dzielnica_uzywa_wlasciwego_alpha():
     art = artefakty(["log_metraz_m2", "pietro", "liczba_pokoi"], [0.0, 0.0, 0.0])
 
     for k, nazwa in enumerate(LEVELS):
-        wynik = predict.wycen(art, nazwa, metraz_m2=50, liczba_pokoi=3, pietro=2)
-        assert wynik["znana_dzielnica"]
-        assert np.log(wynik["segment"]["mediana"]) == pytest.approx(ALPHA[k], abs=1e-6)
+        wynik = predict.value_flat(art, nazwa, area_m2=50, rooms=3, floor=2)
+        assert wynik["known_district"]
+        assert np.log(wynik["segment"]["median"]) == pytest.approx(ALPHA[k], abs=1e-6)
 
 
 def test_nieznana_dzielnica_daje_szerszy_przedzial():
@@ -99,12 +99,12 @@ def test_nieznana_dzielnica_daje_szerszy_przedzial():
     na ktore nie ma danych, i uczciwie sygnalizuje, ze wie mniej.
     """
     art = artefakty(["log_metraz_m2", "pietro", "liczba_pokoi"], [0.0, 0.0, 0.0])
-    mieszkanie = dict(metraz_m2=50, liczba_pokoi=3, pietro=2)
+    mieszkanie = dict(area_m2=50, rooms=3, floor=2)
 
-    znana = predict.wycen(art, "Srednia", **mieszkanie)
-    nieznana = predict.wycen(art, "Wola Justowska", **mieszkanie)
+    znana = predict.value_flat(art, "Srednia", **mieszkanie)
+    nieznana = predict.value_flat(art, "Wola Justowska", **mieszkanie)
 
-    assert not nieznana["znana_dzielnica"]
+    assert not nieznana["known_district"]
 
     szer_znana = znana["segment"]["q95"] - znana["segment"]["q5"]
     szer_nieznana = nieznana["segment"]["q95"] - nieznana["segment"]["q5"]
@@ -119,8 +119,8 @@ def test_szum_rynku_poszerza_przedzial():
     include_noise nie dziala i uzytkownik dostaje zanizona niepewnosc.
     """
     art = artefakty(["log_metraz_m2", "pietro", "liczba_pokoi"], [0.0, 0.0, 0.0])
-    wynik = predict.wycen(art, "Srednia", metraz_m2=50, liczba_pokoi=3, pietro=2)
+    wynik = predict.value_flat(art, "Srednia", area_m2=50, rooms=3, floor=2)
 
-    szer_oferta = wynik["oferta"]["q95"] - wynik["oferta"]["q5"]
+    szer_oferta = wynik["listing"]["q95"] - wynik["listing"]["q5"]
     szer_segment = wynik["segment"]["q95"] - wynik["segment"]["q5"]
     assert szer_oferta > szer_segment

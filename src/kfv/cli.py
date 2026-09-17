@@ -126,11 +126,11 @@ def cmd_summary(args):
     print(f"  nu               {post['nu'].mean():.1f}  (male = ciezkie ogony)")
 
     _naglowek("Dzielnice wzgledem sredniej Krakowa")
-    premie = predict.premia_dzielnic(art)
+    premie = predict.district_premiums(art)
     print(f"  {'dzielnica':<28}{'efekt':>8}{'90% CI':>22}")
-    for nazwa, v in sorted(premie.items(), key=lambda x: -x[1]["srednia"]):
+    for nazwa, v in sorted(premie.items(), key=lambda x: -x[1]["mean"]):
         ci = f"[{v['q5']:+.1f}%, {v['q95']:+.1f}%]"
-        print(f"  {nazwa:<28}{v['srednia']:>+7.1f}%{ci:>22}")
+        print(f"  {nazwa:<28}{v['mean']:>+7.1f}%{ci:>22}")
 
     if art.get("ocena_testowa"):
         _wypisz_ocene(art["ocena_testowa"])
@@ -151,21 +151,21 @@ def cmd_predict(args):
     if not args.dzielnica:
         raise SystemExit("Podaj --dzielnica (lista: --list-dzielnice)")
 
-    w = predict.wycen(art, args.dzielnica, args.metraz, args.pokoje, args.pietro)
+    w = predict.value_flat(art, args.dzielnica, args.metraz, args.pokoje, args.pietro)
 
-    if not w["znana_dzielnica"]:
+    if not w["known_district"]:
         print(f"UWAGA: '{args.dzielnica}' nie wystepuje w danych treningowych.")
         print("       Model uzyje rozkladu populacyjnego dzielnic - przedzial "
               "bedzie szerszy.\n")
 
     _naglowek(f"{args.dzielnica} | {args.metraz:g} m2 | {args.pokoje} pok. "
               f"| pietro {args.pietro}")
-    print(f"  Wycena (mediana)      {w['oferta']['mediana']:>12,.0f} zl"
-          f"   ({w['oferta']['mediana'] / args.metraz:,.0f} zl/m2)")
-    print(f"  Przedzial 50%         {w['oferta']['q25']:>12,.0f} - "
-          f"{w['oferta']['q75']:,.0f} zl")
-    print(f"  Przedzial 90%         {w['oferta']['q5']:>12,.0f} - "
-          f"{w['oferta']['q95']:,.0f} zl")
+    print(f"  Wycena (mediana)      {w['listing']['median']:>12,.0f} zl"
+          f"   ({w['listing']['median'] / args.metraz:,.0f} zl/m2)")
+    print(f"  Przedzial 50%         {w['listing']['q25']:>12,.0f} - "
+          f"{w['listing']['q75']:,.0f} zl")
+    print(f"  Przedzial 90%         {w['listing']['q5']:>12,.0f} - "
+          f"{w['listing']['q95']:,.0f} zl")
     print(f"\n  Dla porownania - niepewnosc SREDNIEJ w tym segmencie (90%):")
     print(f"                        {w['segment']['q5']:>12,.0f} - "
           f"{w['segment']['q95']:,.0f} zl")
