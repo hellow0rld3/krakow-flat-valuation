@@ -1,130 +1,133 @@
-"""Ocena modelu na zbiorze testowym.
+"""Evaluation of the model on a test set.
 
-Liczymy dwie rozne rzeczy:
+We measure two different things:
 
-  BLAD PUNKTOWY (MAPE, RMSE) - o ile srednio mylimy sie co do ceny
-  KALIBRACJA                 - czy przedzial 90% faktycznie pokrywa 90% cen
+  point error (MAPE, RMSE) - how far off we are on the price on average
+  calibration              - whether a 90% interval really covers 90% of prices
 
-Silnik ma znac wlasna niepewnosc, wiec kalibracja jest kryterium waznym
-bardziej niz sama trafnosc. Model, ktory myli sie o 14%, ale uczciwie to
-przyznaje, jest uzyteczny. Model, ktory myli sie o 10% i twierdzi, ze myli sie
-o 2%, jest niebezpieczny, bo ktos podejmie na jego podstawie decyzje
-finansowa, ufajac przedzialowi, ktory nie ma pokrycia w rzeczywistosci.
+The engine is supposed to know its own uncertainty, so calibration matters more
+than accuracy alone. A model that is off by 14% but admits it honestly is
+useful. A model that is off by 10% and claims it is off by 2% is dangerous,
+because someone will make a financial decision on it, trusting an interval that
+has no backing in reality.
 
-Modul niczego nie modyfikuje i nie zapisuje, tylko liczy.
+The module modifies and saves nothing, it only computes.
 """
 import numpy as np
 
 from kfv import predict
 from kfv.data import GROUP, TARGET
 
-# Poziomy, dla ktorych sprawdzamy pokrycie. Kilka zamiast jednego, bo model
-# moze byc dobrze skalibrowany w srodku rozkladu i zle w ogonach - jeden punkt
-# tego nie pokaze.
-POZIOMY = (0.50, 0.80, 0.90, 0.95)
+# Levels at which we check the coverage. Several instead of one, because the
+# model can be well calibrated in the middle of the distribution and badly in
+# the tails - a single point would not show that.
+COVERAGE_LEVELS = (0.50, 0.80, 0.90, 0.95)
 
 
-def przygotuj_wejscie(artefakty, df):
-    """Wyciaga z ramki to, czego potrzebuje predict: surowe cechy, indeksy, prawde.
+def prepare_input(artifacts, df):
+    """Pulls out of the frame what predict needs: raw features, indices, truth.
 
-    Cechy bierzemy w kolejnosci z artefaktow (a nie z data.FEATURES), bo to
-    zapisany model dyktuje, ktora pozycja wektora odpowiada ktorej wadze beta.
+    We take the features in the order stored in the artifacts (and not from
+    data.FEATURES), because it is the saved model that dictates which position
+    of the vector corresponds to which beta weight.
 
-    Dzielnice mapujemy przez predict.district_index, wiec nieznana dzielnica
-    dostanie -1 zamiast wyjatku. W ocenie modelu to poprawne zachowanie:
-    chcemy wiedziec, jak radzi sobie takze tam, gdzie nie mial danych.
+    Districts go through predict.district_index, so an unknown district gets -1
+    instead of an exception. When evaluating the model that is the correct
+    behaviour: we want to know how it does also where it had no data.
     """
-    X_raw = df[artefakty["features"]].to_numpy(dtype=np.float64)
+    X_raw = df[artifacts["features"]].to_numpy(dtype=np.float64)
     group_idx = np.array(
-        [predict.district_index(d, artefakty["levels"]) for d in df[GROUP]],
+        [predict.district_index(d, artifacts["levels"]) for d in df[GROUP]],
         dtype=np.int32,
     )
     y_log = df[TARGET].to_numpy(dtype=np.float64)
     return X_raw, group_idx, y_log
 
 
-def bledy_punktowe(ceny_prawdziwe, ceny_przewidziane):
-    """Klasyczne metryki trafnosci.
+def point_errors(true_prices, predicted_prices):
+    """Classic accuracy metrics.
 
-    Podajemy i srednia, i mediane bledu wzglednego, bo rozjazd miedzy nimi sam
-    w sobie niesie informacje: duza roznica oznacza, ze rozklad bledow jest
-    skosny, czyli kilka nietypowych ofert psuje srednia.
+    We report both the mean and the median relative error, because the gap
+    between them carries information in itself: a large difference means the
+    error distribution is skewed, that is a few unusual listings spoil the mean.
     """
-    blad_wzgledny = np.abs(ceny_przewidziane - ceny_prawdziwe) / ceny_prawdziwe
+    relative_error = np.abs(predicted_prices - true_prices) / true_prices
     return {
-        "MAPE": float(np.mean(blad_wzgledny)),
-        "mediana_bledu": float(np.median(blad_wzgledny)),
-        "RMSE_pln": float(np.sqrt(np.mean((ceny_przewidziane - ceny_prawdziwe) ** 2))),
+        "MAPE": float(np.mean(relative_error)),
+        "median_error": float(np.median(relative_error)),
+        "RMSE_pln": float(np.sqrt(np.mean((predicted_prices - true_prices) ** 2))),
     }
 
 
-def kalibracja(ceny_probki, ceny_prawdziwe, poziomy=POZIOMY):
-    """Dla kazdego poziomu: jaki odsetek prawdziwych cen trafil w przedzial.
+def calibration(price_draws, true_prices, coverage_levels=COVERAGE_LEVELS):
+    """For every level: what fraction of the true prices landed in the interval.
 
-    Przedzial o poziomie 0.9 budujemy jako kwantyle 5% i 95% - czyli symetrycznie,
-    odcinajac po polowie reszty z kazdej strony.
+    An interval at level 0.9 is built from the 5% and 95% quantiles, that is
+    symmetrically, cutting off half of the remainder on each side.
 
-    Interpretacja:
-      pokrycie ~ poziom  -> model uczciwie ocenia wlasna niepewnosc
-      pokrycie < poziom  -> model jest zbyt pewny siebie
-      pokrycie > poziom  -> model jest zachowawczy, przedzialy za szerokie
+    How to read it:
+      coverage ~ level  -> the model judges its own uncertainty honestly
+      coverage < level  -> the model is overconfident
+      coverage > level  -> the model is conservative, intervals too wide
     """
-    wynik = []
-    for poziom in poziomy:
-        margines = (1.0 - poziom) / 2.0
-        dol, gora = np.quantile(ceny_probki, [margines, 1.0 - margines], axis=0)
-        pokryte = (ceny_prawdziwe >= dol) & (ceny_prawdziwe <= gora)
-        wynik.append({
-            "poziom": poziom,
-            "pokrycie": float(np.mean(pokryte)),
-            "srednia_szerokosc_pln": float(np.mean(gora - dol)),
+    result = []
+    for level in coverage_levels:
+        margin = (1.0 - level) / 2.0
+        low, high = np.quantile(price_draws, [margin, 1.0 - margin], axis=0)
+        covered = (true_prices >= low) & (true_prices <= high)
+        result.append({
+            "level": level,
+            "coverage": float(np.mean(covered)),
+            "mean_width_pln": float(np.mean(high - low)),
         })
-    return wynik
+    return result
 
 
-def ocen(artefakty, df, poziomy=POZIOMY, seed=0):
-    """Pelna ocena na podanej ramce (zwykle zbior testowy).
+def evaluate_on(artifacts, df, coverage_levels=COVERAGE_LEVELS, seed=0):
+    """Full evaluation on the given frame (usually the test set).
 
-    Wycena punktowa to mediana rozkladu predykcyjnego, a nie srednia. Na skali
-    zlotowek rozklad jest prawoskosny, wiec srednia jest zawyzona przez ogon
-    drogich ofert wiec mediana lepiej opisuje typowa cene.
+    The point valuation is the median of the predictive distribution, not the
+    mean. On the zloty scale the distribution is right-skewed, so the mean is
+    pulled up by the tail of expensive listings and the median describes the
+    typical price better.
     """
-    X_raw, group_idx, y_log = przygotuj_wejscie(artefakty, df)
+    X_raw, group_idx, y_log = prepare_input(artifacts, df)
 
-    probki_log = predict.predictive_log_price(
-        artefakty, X_raw, group_idx, include_noise=True, seed=seed)
+    log_draws = predict.predictive_log_price(
+        artifacts, X_raw, group_idx, include_noise=True, seed=seed)
 
-    ceny_probki = np.exp(probki_log)
-    ceny_prawdziwe = np.exp(y_log)
-    ceny_przewidziane = np.median(ceny_probki, axis=0)
+    price_draws = np.exp(log_draws)
+    true_prices = np.exp(y_log)
+    predicted_prices = np.median(price_draws, axis=0)
 
     return {
-        "n": int(len(ceny_prawdziwe)),
-        "n_nieznanych_dzielnic": int(np.sum(group_idx < 0)),
-        **bledy_punktowe(ceny_prawdziwe, ceny_przewidziane),
-        "kalibracja": kalibracja(ceny_probki, ceny_prawdziwe, poziomy),
+        "n": int(len(true_prices)),
+        "n_unknown_districts": int(np.sum(group_idx < 0)),
+        **point_errors(true_prices, predicted_prices),
+        "calibration": calibration(price_draws, true_prices, coverage_levels),
     }
 
 
-def bledy_per_dzielnica(artefakty, df, seed=0):
-    """Mediana bledu wzglednego w rozbiciu na dzielnice.
+def errors_by_district(artifacts, df, seed=0):
+    """Median relative error broken down by district.
 
-    Przydatne do diagnozy: model moze byc dobry srednio, a systematycznie mylic
-    sie w jednym segmencie rynku. Srednia po calym zbiorze to ukryje.
+    Useful for diagnosis: the model can be good on average and yet be
+    systematically wrong in one segment of the market. A mean over the whole set
+    would hide that.
     """
-    X_raw, group_idx, y_log = przygotuj_wejscie(artefakty, df)
-    probki_log = predict.predictive_log_price(
-        artefakty, X_raw, group_idx, include_noise=True, seed=seed)
+    X_raw, group_idx, y_log = prepare_input(artifacts, df)
+    log_draws = predict.predictive_log_price(
+        artifacts, X_raw, group_idx, include_noise=True, seed=seed)
 
-    ceny_prawdziwe = np.exp(y_log)
-    ceny_przewidziane = np.median(np.exp(probki_log), axis=0)
-    blad = np.abs(ceny_przewidziane - ceny_prawdziwe) / ceny_prawdziwe
+    true_prices = np.exp(y_log)
+    predicted_prices = np.median(np.exp(log_draws), axis=0)
+    error = np.abs(predicted_prices - true_prices) / true_prices
 
-    wynik = {}
-    for dzielnica in sorted(df[GROUP].unique()):
-        maska = (df[GROUP] == dzielnica).to_numpy()
-        wynik[dzielnica] = {
-            "n": int(maska.sum()),
-            "mediana_bledu": float(np.median(blad[maska])),
+    result = {}
+    for district in sorted(df[GROUP].unique()):
+        mask = (df[GROUP] == district).to_numpy()
+        result[district] = {
+            "n": int(mask.sum()),
+            "median_error": float(np.median(error[mask])),
         }
-    return wynik
+    return result

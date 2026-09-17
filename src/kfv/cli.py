@@ -57,7 +57,7 @@ def cmd_fit(args):
               "przed interpretacja wynikow.")
 
     if len(test) > 0:
-        wynik = evaluate.ocen(artefakty_z_pamieci(mcmc, zbior), test)
+        wynik = evaluate.evaluate_on(artefakty_z_pamieci(mcmc, zbior), test)
         _wypisz_ocene(wynik)
     else:
         wynik = None
@@ -84,13 +84,13 @@ def artefakty_z_pamieci(mcmc, zbior):
 def _wypisz_ocene(wynik):
     _naglowek(f"Ocena na zbiorze testowym ({wynik['n']} ofert)")
     print(f"  MAPE              {100 * wynik['MAPE']:>6.1f}%")
-    print(f"  mediana bledu     {100 * wynik['mediana_bledu']:>6.1f}%")
+    print(f"  mediana bledu     {100 * wynik['median_error']:>6.1f}%")
     print(f"  RMSE              {wynik['RMSE_pln']:>9,.0f} zl")
     print("\n  Kalibracja (im blizej nominalnego, tym lepiej):")
     print(f"  {'nominalnie':>12}{'empirycznie':>14}{'sr. szerokosc':>17}")
-    for k in wynik["kalibracja"]:
-        print(f"  {100 * k['poziom']:>11.0f}%{100 * k['pokrycie']:>13.1f}%"
-              f"{k['srednia_szerokosc_pln']:>16,.0f} zl")
+    for k in wynik["calibration"]:
+        print(f"  {100 * k['level']:>11.0f}%{100 * k['coverage']:>13.1f}%"
+              f"{k['mean_width_pln']:>16,.0f} zl")
 
 
 # --------------------------------------------------------------------------- #
