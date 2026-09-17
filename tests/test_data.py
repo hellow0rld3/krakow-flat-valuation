@@ -5,11 +5,11 @@ from kfv import data
 
 
 @pytest.fixture
-def zbiory():
-    """Buduje raz zbiory train/test i udostepnia je wszystkim testom.
+def datasets():
+    """Builds the train/test sets once and shares them with all the tests.
 
-    Test jest przetwarzany parametrami z treningu (levels, scaler) - dokladnie
-    tak, jak zrobi to pozniej predykcja na nowych danych.
+    The test set is processed with the parameters from training (levels,
+    scaler) - exactly the way prediction on new data will do it later.
     """
     df = data.prepare_dataset(data.load_data())
     train, test = data.split(df)
@@ -18,76 +18,76 @@ def zbiory():
     return {"train_df": train, "tr": tr, "test_df": test, "te": te}
 
 
-def test_wiersze_odpowiadaja_zrodlu(zbiory):
-    """X, y i group_idx musza opisywac te same wiersze co ramka zrodlowa.
+def test_rows_match_the_source(datasets):
+    """X, y and group_idx have to describe the same rows as the source frame.
 
-    Sprawdzamy dwie rzeczy, kazda z innego powodu:
+    We check two things, each for a different reason:
 
-    1. Ksztalty. Rozjazd DLUGOSCI i tak wywalilby pozniej MCMC
-       ("Incompatible shapes for broadcasting"), wiec tutaj tylko lapiemy
-       go wczesniej i czytelniej. Realna wartosc ma natomiast warunek
-       y.shape == (N,): postac (N, 1) nie zglosi bledu, tylko po cichu
-       rozjedzie broadcasting przy liczeniu rozkladu predykcyjnego.
+    1. Shapes. A mismatch in length would blow up MCMC later anyway
+       ("Incompatible shapes for broadcasting"), so here we only catch it
+       earlier and more readably. The condition that really earns its place is
+       y.shape == (N,): the shape (N, 1) raises nothing, it only quietly breaks
+       the broadcasting when the predictive distribution is computed.
 
-    2. Zgodnosc wiersz po wierszu. To jest przypadek, ktorego nie wykryje
-       nic innego: tablice o poprawnych ksztaltach, ale z przestawionymi
-       wierszami. Zdarza sie, gdy ktos przefiltruje albo posortuje jedno
-       zrodlo, a zapomni o pozostalych. Model policzy sie normalnie
-       i dopasuje ceny do niewlasciwych mieszkan.
+    2. Row-by-row correspondence. This is the case nothing else would catch:
+       arrays of the right shape, but with the rows shuffled. It happens when
+       someone filters or sorts one source and forgets about the others. The
+       model will fit without complaining and match prices to the wrong flats.
 
-    Dla wybranych wierszy sprawdzamy wiec, ze y zgadza sie z cena z ramki,
-    ze group_idx wskazuje na wlasciwa dzielnice, i ze odstandaryzowane X
-    odtwarza oryginalne cechy.
+    So for a few rows we check that y agrees with the price in the frame, that
+    group_idx points at the right district, and that destandardized X
+    reproduces the original features.
     """
-    for klucz_df, klucz_zbior in [("train_df", "tr"), ("test_df", "te")]:
-        df, zbior = zbiory[klucz_df], zbiory[klucz_zbior]
-        n = len(zbior["y"])
+    for df_key, dataset_key in [("train_df", "tr"), ("test_df", "te")]:
+        df, dataset = datasets[df_key], datasets[dataset_key]
+        n = len(dataset["y"])
 
-        assert zbior["X"].shape == (n, len(data.FEATURES))
-        assert zbior["y"].shape == (n,)
-        assert zbior["group_idx"].shape == (n,)
+        assert dataset["X"].shape == (n, len(data.FEATURES))
+        assert dataset["y"].shape == (n,)
+        assert dataset["group_idx"].shape == (n,)
 
         for i in (0, n // 3, n - 1):
-            assert zbior["y"][i] == pytest.approx(df[data.TARGET].iloc[i])
-            assert zbior["levels"][zbior["group_idx"][i]] == df[data.GROUP].iloc[i]
+            assert dataset["y"][i] == pytest.approx(df[data.TARGET].iloc[i])
+            assert dataset["levels"][dataset["group_idx"][i]] == df[data.GROUP].iloc[i]
 
-            odtworzone = zbior["X"][i] * zbior["scaler"].std + zbior["scaler"].mean
-            assert odtworzone == pytest.approx(df[data.FEATURES].iloc[i].to_numpy())
+            restored = dataset["X"][i] * dataset["scaler"].std + dataset["scaler"].mean
+            assert restored == pytest.approx(df[data.FEATURES].iloc[i].to_numpy())
 
 
-def test_group_idx_miesci_sie_w_zakresie(zbiory):
-    """Kazdy indeks dzielnicy musi wskazywac na istniejacy poziom 0..K-1.
+def test_group_idx_stays_in_range(datasets):
+    """Every district index has to point at an existing level 0..K-1.
 
-    Ten test lapie ciche uszkodzenia kodu: nieznana dzielnica zamieniona
-    na -1 (co w numpy oznacza OSTATNI element) albo NaN skonwertowany na 0
-    (czyli PIERWSZA dzielnica). W obu przypadkach nic nie wybucha, a oferta
-    zostaje po cichu przypisana do niewlasciwej dzielnicy.
+    This test catches silent damage to the code: an unknown district turned
+    into -1 (which in numpy means the last element) or a NaN converted to 0
+    (that is, the first district). In both cases nothing blows up and the
+    listing is quietly assigned to the wrong district.
     """
-    tr, te = zbiory["tr"], zbiory["te"]
+    tr, te = datasets["tr"], datasets["te"]
     k = len(tr["levels"])
-    for zbior in (tr, te):
-        assert zbior["group_idx"].min() >= 0
-        assert zbior["group_idx"].max() < k
+    for dataset in (tr, te):
+        assert dataset["group_idx"].min() >= 0
+        assert dataset["group_idx"].max() < k
 
 
-def test_standaryzacja_nie_przecieka(zbiory):
-    """Parametry standaryzacji moga pochodzic wylacznie ze zbioru treningowego.
+def test_standardization_does_not_leak(datasets):
+    """The standardization parameters may come from the training set only.
 
-    Sprawdzamy dwie rzeczy naraz:
+    We check two things at once:
 
-    1. srednia X_train ~ 0 i odchylenie ~ 1  -> parametry faktycznie policzono na treningu,
-    2. srednia X_test ODBIEGA od zera        -> parametrow NIE policzono na tescie.
+    1. mean of X_train ~ 0 and standard deviation ~ 1  -> the parameters really
+       were computed on training,
+    2. mean of X_test departs from zero                -> they were not
+       computed on the test set.
 
-    Punkt 2 jest wlasciwym detektorem wycieku. Gdyby ktos "poprawil" kod tak,
-    by scaler dopasowywal sie do zbioru testowego, punkt 1 nadal by przechodzil
-    (trening zawsze ma srednia zero), a wszystkie metryki jakosci modelu
-    wyszlyby zawyzone - bez zadnego bledu i bez zadnego ostrzezenia.
+    Point 2 is the actual leak detector. If someone "fixed" the code so that the
+    scaler fits itself to the test set, point 1 would still pass (training
+    always has mean zero), and every quality metric would come out too
+    optimistic - with no error and no warning.
 
-    Prog 0.01 jest arbitralny, ale bezpieczny: przy poprawnym podziale
-    obserwowane odchylenie srednich testowych to okolo 0.25.
+    The 0.01 threshold is arbitrary but safe: with a correct split the observed
+    departure of the test means is around 0.25.
     """
-    
-    tr, te = zbiory["tr"], zbiory["te"]
+    tr, te = datasets["tr"], datasets["te"]
 
     assert np.allclose(tr["X"].mean(axis=0), 0.0, atol=1e-8)
     assert np.allclose(tr["X"].std(axis=0), 1.0, atol=1e-8)

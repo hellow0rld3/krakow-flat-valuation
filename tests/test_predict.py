@@ -1,13 +1,13 @@
-"""Testy modulu predykcji.
+"""Tests of the prediction module.
 
-Nie wczytujemy prawdziwych artefaktow z dysku, tylko budujemy SZTUCZNY
-posterior o znanych wartosciach. Trzy powody:
+We do not load the real artifacts from disk, we build a synthetic posterior with
+known values instead. Three reasons:
 
-  1. artifacts/ jest w .gitignore, wiec po swiezym git clone nie byloby czego
-     wczytac i testy padalyby u wszystkich oprocz autora,
-  2. nie trzeba uruchamiac MCMC, wiec testy trwaja milisekundy,
-  3. skoro sami ustalamy alpha i beta, wynik da sie policzyc na kartce -
-     sprawdzamy konkretna liczbe, a nie "cos w okolicy".
+  1. artifacts/ is in .gitignore, so after a fresh git clone there would be
+     nothing to load and the tests would fail for everyone except the author,
+  2. no need to run MCMC, so the tests take milliseconds,
+  3. since we set alpha and beta ourselves, the result can be worked out on
+     paper - we check a specific number, not "something in the right region".
 """
 import numpy as np
 import pytest
@@ -15,27 +15,27 @@ import pytest
 from kfv import predict
 from kfv.data import Scaler
 
-S = 200                                   # liczba probek w sztucznym posteriorze
-ALPHA = np.array([13.0, 14.0, 15.0])      # trzy dzielnice o roznych poziomach cen
-LEVELS = ["Tania", "Srednia", "Droga"]
+S = 200                                   # number of samples in the synthetic posterior
+ALPHA = np.array([13.0, 14.0, 15.0])      # three districts at different price levels
+LEVELS = ["Cheap", "Middling", "Expensive"]
 
 
-def artefakty(features, beta, sigma=0.1, sigma_dzielnica=0.5):
-    """Buduje sztuczne artefakty o zadanych wagach cech.
+def artifacts(features, beta, sigma=0.1, sigma_district=0.5):
+    """Builds synthetic artifacts with the given feature weights.
 
-    Scaler jest tozsamosciowy (srednia 0, odchylenie 1), wiec cechy wchodza do
-    modelu dokladnie takie, jakie je podamy - bez tego nie dalo by sie policzyc
-    oczekiwanego wyniku recznie.
+    The Scaler is the identity (mean 0, standard deviation 1), so the features
+    enter the model exactly as we pass them - without that the expected result
+    could not be computed by hand.
 
-    alpha jest STALE we wszystkich probkach, wiec bez szumu rynku predykcja
-    jest deterministyczna.
+    alpha is constant across all the samples, so without market noise the
+    prediction is deterministic.
     """
     return {
         "posterior": {
             "alpha": np.tile(ALPHA, (S, 1)),
             "beta": np.tile(np.asarray(beta, dtype=float), (S, 1)),
             "mu_city": np.full(S, ALPHA.mean()),
-            "sigma_district": np.full(S, sigma_dzielnica),
+            "sigma_district": np.full(S, sigma_district),
             "sigma": np.full(S, sigma),
             "nu": np.full(S, 5.0),
         },
@@ -45,82 +45,84 @@ def artefakty(features, beta, sigma=0.1, sigma_dzielnica=0.5):
     }
 
 
-def test_kolejnosc_cech_pochodzi_z_artefaktow():
-    """Wektor cech musi byc ulozony wedlug listy features z ARTEFAKTOW.
+def test_feature_order_comes_from_the_artifacts():
+    """The feature vector has to follow the features list from the artifacts.
 
-    To najwazniejszy test w tym pliku, bo lapie blad, ktory nie daje zadnego
-    objawu: gdyby predykcja ukladala cechy wedlug wlasnego wyobrazenia,
-    a zapisany model mial inna kolejnosc, liczba pokoi zostalaby pomnozona
-    przez wage pieter. Zaden wyjatek nie poleci, wynik bedzie wygladal
-    wiarygodnie i bedzie po prostu zly.
+    This is the most important test in the file, because it catches a bug that
+    gives no symptom at all: if prediction laid out the features the way it
+    imagines them, and the saved model had a different order, the number of
+    rooms would be multiplied by the weight of the floor. No exception would be
+    raised, the result would look credible and would simply be wrong.
 
-    Scenariusz: te same wagi beta = [0, 1, 0], czyli caly efekt na DRUGIEJ
-    cesze. Zmieniamy tylko kolejnosc listy features i sprawdzamy, ze efekt
-    przenosi sie na inna wielkosc.
+    The setup: the same weights beta = [0, 1, 0], that is the whole effect on
+    the second feature. We change only the order of the features list and check
+    that the effect moves onto a different quantity.
     """
-    mieszkanie = dict(district="Tania", area_m2=50, rooms=3, floor=7)
+    flat = dict(district="Cheap", area_m2=50, rooms=3, floor=7)
 
-    # wariant A: druga cecha to pietro  -> oczekujemy alpha + 7
+    # variant A: the second feature is the floor -> we expect alpha + 7
     a = predict.value_flat(
-        artefakty(["log_metraz_m2", "pietro", "liczba_pokoi"], [0.0, 1.0, 0.0]),
-        **mieszkanie)
-    # wariant B: druga cecha to liczba pokoi -> oczekujemy alpha + 3
+        artifacts(["log_metraz_m2", "pietro", "liczba_pokoi"], [0.0, 1.0, 0.0]),
+        **flat)
+    # variant B: the second feature is the number of rooms -> we expect alpha + 3
     b = predict.value_flat(
-        artefakty(["log_metraz_m2", "liczba_pokoi", "pietro"], [0.0, 1.0, 0.0]),
-        **mieszkanie)
+        artifacts(["log_metraz_m2", "liczba_pokoi", "pietro"], [0.0, 1.0, 0.0]),
+        **flat)
 
     assert np.log(a["segment"]["median"]) == pytest.approx(13.0 + 7.0, abs=1e-6)
     assert np.log(b["segment"]["median"]) == pytest.approx(13.0 + 3.0, abs=1e-6)
 
 
-def test_znana_dzielnica_uzywa_wlasciwego_alpha():
-    """Dla dzielnicy k predykcja musi opierac sie na alpha[k].
+def test_known_district_uses_the_right_alpha():
+    """For district k the prediction has to be based on alpha[k].
 
-    Wagi cech sa zerowe, wiec jedyne, co wplywa na wynik, to efekt dzielnicy.
-    Kazda z trzech musi dac dokladnie swoja wartosc z ALPHA.
+    The feature weights are zero, so the only thing that affects the result is
+    the district effect. Each of the three has to give exactly its own value
+    from ALPHA.
     """
-    art = artefakty(["log_metraz_m2", "pietro", "liczba_pokoi"], [0.0, 0.0, 0.0])
+    art = artifacts(["log_metraz_m2", "pietro", "liczba_pokoi"], [0.0, 0.0, 0.0])
 
-    for k, nazwa in enumerate(LEVELS):
-        wynik = predict.value_flat(art, nazwa, area_m2=50, rooms=3, floor=2)
-        assert wynik["known_district"]
-        assert np.log(wynik["segment"]["median"]) == pytest.approx(ALPHA[k], abs=1e-6)
+    for k, name in enumerate(LEVELS):
+        result = predict.value_flat(art, name, area_m2=50, rooms=3, floor=2)
+        assert result["known_district"]
+        assert np.log(result["segment"]["median"]) == pytest.approx(ALPHA[k], abs=1e-6)
 
 
-def test_nieznana_dzielnica_daje_szerszy_przedzial():
-    """Dzielnica spoza treningu nie jest bledem, tylko wieksza niepewnoscia.
+def test_unknown_district_widens_the_interval():
+    """A district outside training is not an error, only more uncertainty.
 
-    Dla znanej dzielnicy alpha jest w sztucznym posteriorze stale, wiec
-    przedzial dla sredniej segmentu ma szerokosc zero. Dla nieznanej model
-    losuje nowy efekt z rozkladu populacyjnego N(mu, sigma_dzielnica), wiec
-    przedzial musi sie wyraznie rozszerzyc.
+    For a known district alpha is constant in the synthetic posterior, so the
+    interval for the segment average has zero width. For an unknown one the
+    model draws a new effect from the population distribution
+    N(mu, sigma_district), so the interval has to widen clearly.
 
-    Na tym polega praktyczna wartosc hierarchii: model odpowiada na pytanie,
-    na ktore nie ma danych, i uczciwie sygnalizuje, ze wie mniej.
+    This is where the hierarchy pays off in practice: the model answers a
+    question it has no data for, and honestly signals that it knows less.
     """
-    art = artefakty(["log_metraz_m2", "pietro", "liczba_pokoi"], [0.0, 0.0, 0.0])
-    mieszkanie = dict(area_m2=50, rooms=3, floor=2)
+    art = artifacts(["log_metraz_m2", "pietro", "liczba_pokoi"], [0.0, 0.0, 0.0])
+    flat = dict(area_m2=50, rooms=3, floor=2)
 
-    znana = predict.value_flat(art, "Srednia", **mieszkanie)
-    nieznana = predict.value_flat(art, "Wola Justowska", **mieszkanie)
+    known = predict.value_flat(art, "Middling", **flat)
+    unknown = predict.value_flat(art, "Wola Justowska", **flat)
 
-    assert not nieznana["known_district"]
+    assert not unknown["known_district"]
 
-    szer_znana = znana["segment"]["q95"] - znana["segment"]["q5"]
-    szer_nieznana = nieznana["segment"]["q95"] - nieznana["segment"]["q5"]
-    assert szer_nieznana > szer_znana
+    width_known = known["segment"]["q95"] - known["segment"]["q5"]
+    width_unknown = unknown["segment"]["q95"] - unknown["segment"]["q5"]
+    assert width_unknown > width_known
 
 
-def test_szum_rynku_poszerza_przedzial():
-    """Przedzial dla konkretnej oferty musi byc szerszy niz dla sredniej segmentu.
+def test_market_noise_widens_the_interval():
+    """The interval for one listing has to be wider than for the segment average.
 
-    Pierwszy zawiera oba zrodla niepewnosci (niewiedza modelu + rozrzut rynku),
-    drugi tylko pierwsze. Gdyby wyszly rowne, znaczyloby to, ze przelacznik
-    include_noise nie dziala i uzytkownik dostaje zanizona niepewnosc.
+    The first contains both sources of uncertainty (what the model does not know
+    plus the spread of the market), the second only the first one. If they came
+    out equal, it would mean the include_noise switch does not work and the user
+    is given an understated uncertainty.
     """
-    art = artefakty(["log_metraz_m2", "pietro", "liczba_pokoi"], [0.0, 0.0, 0.0])
-    wynik = predict.value_flat(art, "Srednia", area_m2=50, rooms=3, floor=2)
+    art = artifacts(["log_metraz_m2", "pietro", "liczba_pokoi"], [0.0, 0.0, 0.0])
+    result = predict.value_flat(art, "Middling", area_m2=50, rooms=3, floor=2)
 
-    szer_oferta = wynik["listing"]["q95"] - wynik["listing"]["q5"]
-    szer_segment = wynik["segment"]["q95"] - wynik["segment"]["q5"]
-    assert szer_oferta > szer_segment
+    width_listing = result["listing"]["q95"] - result["listing"]["q5"]
+    width_segment = result["segment"]["q95"] - result["segment"]["q5"]
+    assert width_listing > width_segment
