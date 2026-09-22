@@ -4,10 +4,9 @@ __pycache__/
 .pytest_cache/
 .DS_Store
 
-# wyniki MCMC - odtwarzalne, nie trzymamy w repo
+# MCMC output - reproducible, so it stays out of the repo
 artifacts/
-*.nc
 *.npz
 
-# surowe scrapy z tytulami i linkami - nie trafiaja do repo
+# raw scrapes with titles and links - never committed
 data/raw/
