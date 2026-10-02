@@ -20,22 +20,22 @@ how much less it knows.
 | Metric | Value |
 |---|---|
 | MAPE | 14.7% |
-| Median error | 10.5% |
-| RMSE | 186,877 PLN |
-| Worst R-hat | 1.0007 |
-| Lowest ESS | 552 |
+| Median error | 10.4% |
+| RMSE | 186,885 PLN |
+| Worst R-hat | 1.0034 |
+| Lowest ESS | 538 |
 | Divergences | 0 |
 
 Calibration on the test set:
 
 | Nominal | Empirical coverage | Mean interval width |
 |---|---|---|
-| 50% | 54.0% | 179,518 PLN |
-| 80% | 84.2% | 375,524 PLN |
-| 90% | 91.1% | 529,407 PLN |
-| 95% | 96.0% | 703,740 PLN |
+| 50% | 54.5% | 178,955 PLN |
+| 80% | 84.7% | 374,451 PLN |
+| 90% | 92.1% | 527,667 PLN |
+| 95% | 96.0% | 701,246 PLN |
 
-Calibration is the number that matters here. A 90% interval covers 91.1% of the
+Calibration is the number that matters here. A 90% interval covers 92.1% of the
 test prices, so the intervals mean roughly what they claim to mean — which is
 what makes the point estimate usable in the first place. Every level sits a
 little above nominal, so the model is mildly conservative: its intervals are
@@ -49,15 +49,31 @@ git clone https://github.com/hellow0rld3/krakow-flat-valuation.git
 cd krakow-flat-valuation
 python3 -m venv .venv
 source .venv/bin/activate
-pip install numpyro pandas pytest
+pip install -e ".[dev]"
 ```
 
-Developed on Python 3.13 with NumPyro 0.21, JAX 0.11 and pandas 3.0.
+Needs Python 3.12 or newer. The editable install puts a `kfv` command on the
+path and makes the package importable without setting `PYTHONPATH`.
+
+### Reproducing the reported numbers
+
+`pyproject.toml` declares lower bounds, so a fresh install picks up current
+releases of the dependencies. Sampling runs through JAX, and a different JAX or
+NumPyro release shifts the figures above slightly even at an identical seed — so
+the exact versions the results came from are pinned separately:
+
+```bash
+pip install -r requirements.txt
+```
+
+The numbers in this README were produced with NumPyro 0.22.0, JAX 0.11.2, NumPy
+2.5.3 and pandas 3.0.6 on Python 3.13.15. At those versions repeated runs of
+`kfv fit` on the same machine reproduce them exactly.
 
 ## Usage
 
 ```bash
-PYTHONPATH=src python -m kfv.cli fit
+kfv fit
 ```
 
 Fits the model to `data/processed/krakow.csv`, prints the convergence
@@ -66,7 +82,7 @@ to `artifacts/` as `posterior.npz` and `meta.json`. Takes about six seconds on a
 laptop.
 
 ```bash
-PYTHONPATH=src python -m kfv.cli summary
+kfv summary
 ```
 
 Shows what the model has learned: the effect of each feature on the price, the
@@ -74,24 +90,24 @@ city-level parameters, and a ranking of the districts against the Kraków
 average.
 
 ```bash
-PYTHONPATH=src python -m kfv.cli predict --district Krowodrza --area 55 --rooms 3 --floor 2
+kfv predict --district Krowodrza --area 55 --rooms 3 --floor 2
 ```
 
 ```
 Krowodrza | 55 m2 | 3 rooms | floor 2
 -------------------------------------
-  Valuation (median)         902,776 PLN   (16,414 PLN/m2)
-  50% interval               808,306 - 1,010,145 PLN
-  90% interval               652,913 - 1,239,222 PLN
+  Valuation (median)         901,407 PLN   (16,389 PLN/m2)
+  50% interval               809,649 - 1,009,040 PLN
+  90% interval               654,424 - 1,235,503 PLN
 
   For comparison - uncertainty about the average in this segment (90%):
-                             870,391 - 939,240 PLN
+                             870,528 - 938,055 PLN
 ```
 
-The two intervals answer two different questions. The narrow one, 870k–939k,
+The two intervals answer two different questions. The narrow one, 871k–938k,
 covers the average price of flats with these features in Krowodrza: it reflects
 only what the model does not yet know, and it shrinks as more listings are
-collected. The wide one, 653k–1,239k, is the valuation of an individual flat,
+collected. The wide one, 654k–1,236k, is the valuation of an individual flat,
 and it also contains the spread between listings that share every feature the
 model can see — finish, view, how urgently the owner wants to sell. That spread
 does not shrink with more data, because no amount of listings makes two flats
@@ -215,11 +231,9 @@ error at all.
 
 ## Roadmap
 
-- Packaging: `pyproject.toml`, so that `pip install -e .` replaces `PYTHONPATH=src`.
 - Split `--seed` into `--seed` and `--split-seed`, so the split can be held fixed
   while the sampler seed varies.
 - Simulation-based calibration and a prior-posterior contraction check.
-- More features, once the scraper collects them.
 
 ## License
 

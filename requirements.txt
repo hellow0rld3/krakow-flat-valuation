@@ -1,0 +1,28 @@
+# The exact environment the numbers in README.md were produced with.
+#
+# pyproject.toml declares the lower bounds needed to run the project; this file
+# pins the versions those particular results came from. Sampling goes through
+# JAX, so a different JAX or NumPyro release shifts the figures slightly even at
+# an identical seed.
+#
+#   pip install -r requirements.txt
+
+jax==0.11.2
+jaxlib==0.11.2
+ml_dtypes==0.6.0
+multipledispatch==1.0.0
+numpy==2.5.3
+numpyro==0.22.0
+opt_einsum==3.4.0
+pandas==3.0.6
+python-dateutil==2.9.0.post0
+scipy==1.18.1
+six==1.17.0
+tqdm==4.70.1
+
+# development only
+iniconfig==2.3.0
+packaging==26.3
+pluggy==1.6.0
+Pygments==2.21.0
+pytest==9.1.1
