@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .DS_Store
+*.egg-info/
 
 # MCMC output - reproducible, so it stays out of the repo
 artifacts/
