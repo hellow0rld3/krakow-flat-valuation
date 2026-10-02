@@ -81,6 +81,10 @@ diagnostics and the evaluation on the held-out test set, and writes the result
 to `artifacts/` as `posterior.npz` and `meta.json`. Takes about six seconds on a
 laptop.
 
+`--seed` controls the sampler and `--split-seed` the train/test split; keeping
+them apart makes it possible to vary one while holding the other fixed. Both
+default to 0 and both are recorded in `meta.json`.
+
 ```bash
 kfv summary
 ```
@@ -231,8 +235,6 @@ error at all.
 
 ## Roadmap
 
-- Split `--seed` into `--seed` and `--split-seed`, so the split can be held fixed
-  while the sampler seed varies.
 - Simulation-based calibration and a prior-posterior contraction check.
 
 ## License

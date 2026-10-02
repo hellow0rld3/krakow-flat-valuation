@@ -32,7 +32,12 @@ def cmd_fit(args):
     numpyro.set_host_device_count(args.chains)
 
     df = data.prepare_dataset(data.load_data(args.data))
-    train, test = data.split(df, seed=args.seed)
+    # The split and the sampler get separate seeds on purpose. Vary --seed to
+    # see how stable the sampler is on a fixed evaluation set, and --split-seed
+    # to see how much the metrics depend on which listings landed in the test
+    # set. Sharing one seed would answer neither question, because both would
+    # change at once.
+    train, test = data.split(df, seed=args.split_seed)
     dataset = data.build(train)
 
     print(f"Data: {len(train)} training / {len(test)} test, "
@@ -61,8 +66,12 @@ def cmd_fit(args):
     else:
         result = None
 
+    # Both seeds go into the artifacts, so a saved posterior carries everything
+    # needed to reproduce the run that made it.
     directory = inference.save(mcmc, dataset, args.artifacts,
-                               extra={"test_evaluation": result})
+                               extra={"seed": args.seed,
+                                      "split_seed": args.split_seed,
+                                      "test_evaluation": result})
     print(f"\nSaved the artifacts to {directory}")
 
 
@@ -189,7 +198,11 @@ def build_parser():
     f.add_argument("--warmup", type=int, default=1000)
     f.add_argument("--samples", type=int, default=1000)
     f.add_argument("--chains", type=int, default=4)
-    f.add_argument("--seed", type=int, default=0)
+    f.add_argument("--seed", type=int, default=0,
+                   help="seed for the sampler (default 0)")
+    f.add_argument("--split-seed", type=int, default=0,
+                   help="seed for the train/test split (default 0); separate "
+                        "from --seed so the evaluation set can be held fixed")
     f.set_defaults(func=cmd_fit)
 
     s = sub.add_parser("summary", help="what the model has learned")
