@@ -161,3 +161,54 @@ parameter the model never uses, because a wide prior already contains the truth.
 Whether the data actually moved the posterior is a separate question and needs a
 separate assertion.
 
+---
+
+## 4. Which matters more, the sampler seed or the split?
+
+**2026-10-02. Run on this repository after separating `--split-seed` from
+`--seed`.** Unlike the three entries above, this one ran on the pinned
+environment recorded in `requirements.txt` (NumPyro 0.22.0, JAX 0.11.2), so its
+numbers line up with the README while entries 1 and 2 do not.
+
+Until then a single `--seed` drove both the train/test split and the sampler, so
+a changed result could not be attributed to either. Separating them turned that
+into a measurable question: how much of the variation in the reported metrics
+comes from MCMC, and how much from which listings happened to land in the test
+set?
+
+Three runs, 804 training and 202 test listings each, 4 chains x 1000 samples
+after 1000 warmup.
+
+| | default (0, 0) | `--seed 5` | `--split-seed 5` |
+|---|---|---|---|
+| MAPE | 14.7% | 14.7% | 15.6% |
+| Median error | 10.4% | 10.4% | 10.1% |
+| RMSE | 186,885 PLN | 186,703 PLN | 272,658 PLN |
+| 90% coverage | 92.1% | 91.6% | 89.1% |
+| Worst R-hat | 1.0034 | 1.0028 | 1.0030 |
+
+Changing the sampler seed moves almost nothing: MAPE and median error are
+identical, RMSE differs by 0.1%. Changing the split moves a great deal, and RMSE
+most of all - up 46%.
+
+The pattern inside the third column is the informative part. MAPE and RMSE rise
+while the median error falls, from 10.4% to 10.1%. That is the signature of a few
+very expensive flats landing in the test set: RMSE squares large errors, so a
+handful of listings at several million can dominate it, while the median does not
+feel them at all. The model did not get 46% worse; the test set got harder.
+
+Checked separately on `data.split` itself: seed 0 twice produces an identical
+test set, and seed 5 produces a different one sharing 39 of its 202 listings.
+
+**Caveat on validity:** this is one alternative split, not a repeated-split
+study. It shows that split variance dominates sampler variance here; it does not
+estimate how large that variance is. A proper answer would average the metrics
+over many splits.
+
+**Conclusion:** the two seeds are not comparable in effect, and that asymmetry is
+the result. Changing the sampler seed leaves MAPE and the median error untouched
+and moves RMSE by 0.1%; changing the split moves RMSE by 46%. So the caveat in the
+README - that every reported number comes from a single split with seed 0 - is a
+real magnitude rather than a formality, and RMSE is the metric that should not be
+quoted without naming the split it came from. The median error was the most stable
+of the three, which makes it the safest single figure to report.
