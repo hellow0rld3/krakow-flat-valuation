@@ -19,6 +19,13 @@ N_OBS = 800          # as many as we really have in the training set
 N_GROUPS = 19        # as many as there are districts
 SEED = 0
 
+PRIOR_DRAWS = 4000   # only sampling from the priors, so this costs nothing
+# The lowest contraction a correctly wired model reaches here is 0.67, for
+# z_district; everything else is above 0.9. A threshold of 0.5 therefore leaves
+# a wide margin while still catching a parameter whose posterior has not moved
+# off its prior at all.
+MIN_CONTRACTION = 0.5
+
 _rng = np.random.default_rng(SEED)
 
 # We center z_district on zero and pass it to the generator that way.
@@ -46,6 +53,16 @@ TRUTH = {
 }
 
 
+_X = _rng.normal(size=(N_OBS, 3))                   # features already "standardized"
+_GROUP_IDX = _rng.integers(0, N_GROUPS, size=N_OBS)
+
+# The arguments the model is called with, shared by the fit and by the prior
+# draws in the contraction test - comparing the two only means something if both
+# saw the same design matrix and the same district assignment.
+INPUTS = dict(X=_X, group_idx=_GROUP_IDX,
+              n_groups=N_GROUPS, mu_prior_loc=TRUTH["mu_city"])
+
+
 @pytest.fixture(scope="module")
 def posterior():
     """Generates data at TRUTH and fits the model to them.
@@ -53,23 +70,17 @@ def posterior():
     scope="module" makes MCMC run once for the whole file rather than before
     every test separately.
     """
-    X = _rng.normal(size=(N_OBS, 3))                # features already "standardized"
-    group_idx = _rng.integers(0, N_GROUPS, size=N_OBS)
-
-    inputs = dict(X=X, group_idx=group_idx,
-                  n_groups=N_GROUPS, mu_prior_loc=TRUTH["mu_city"])
-
     # condition substitutes the given values instead of drawing them from the
     # priors, so y arises exactly at the parameters from TRUTH. The generator is
     # the same model() function, so there is no risk of it drifting apart from
     # the specification.
     generated = Predictive(condition(model, TRUTH), num_samples=1)(
-        jax.random.PRNGKey(SEED), **inputs)
+        jax.random.PRNGKey(SEED), **INPUTS)
     y = np.asarray(generated["y"][0])
 
     mcmc = MCMC(NUTS(model), num_warmup=1500, num_samples=2000,
                 num_chains=2, progress_bar=False)
-    mcmc.run(jax.random.PRNGKey(SEED + 1), y=y, **inputs)
+    mcmc.run(jax.random.PRNGKey(SEED + 1), y=y, **INPUTS)
     return mcmc
 
 
@@ -117,3 +128,45 @@ def test_chains_converged(posterior):
 
     divergences = int(np.sum(posterior.get_extra_fields()["diverging"]))
     assert divergences == 0, f"{divergences} divergences"
+
+
+@pytest.mark.slow
+def test_data_informs_every_parameter(posterior):
+    """Every parameter's posterior has to be narrower than its prior.
+
+    This closes a gap the recovery test above cannot see. Recovery asks whether
+    the truth lies inside the posterior interval, and a parameter the model
+    never actually uses passes that question easily: its posterior stays equal
+    to its prior, and a wide prior already contains the truth. The model would
+    be wired wrong and both tests above would still be green.
+
+    Prior-posterior contraction asks the other question - did the data say
+    anything about this parameter at all:
+
+        contraction = 1 - sd(posterior) / sd(prior)
+
+    Near 1 means the data pinned the parameter down, near 0 means the posterior
+    is just the prior read back. We take the prior sd by sampling the model
+    without observations rather than deriving it by hand, so the test keeps
+    working if a prior in model.py is ever changed - a hardcoded number would go
+    stale silently, which is the same class of bug this test exists to catch.
+
+    For the vector parameters we average the sd across components; a single
+    weakly identified district would be diluted, but the failure this guards
+    against affects a parameter as a whole.
+    """
+    prior = Predictive(model, num_samples=PRIOR_DRAWS)(
+        jax.random.PRNGKey(SEED + 2), **INPUTS)
+    post = posterior.get_samples()
+
+    weak = []
+    for name in TRUTH:
+        prior_sd = float(np.mean(np.std(np.asarray(prior[name]), axis=0)))
+        post_sd = float(np.mean(np.std(np.asarray(post[name]), axis=0)))
+        contraction = 1.0 - post_sd / prior_sd
+        if contraction < MIN_CONTRACTION:
+            weak.append(f"{name}: contraction {contraction:.3f} "
+                        f"(prior sd {prior_sd:.3f} -> posterior sd {post_sd:.3f})")
+
+    assert not weak, ("Parameters the data barely constrained:\n"
+                      + "\n".join(weak))
