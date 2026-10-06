@@ -201,6 +201,15 @@ wrong district indexing does not raise an exception — it quietly produces a
 different model that still fits something. Nothing but recovery catches that.
 It is marked `slow` because it runs MCMC.
 
+A second check on the same fit asks the opposite question: did the data say
+anything about each parameter at all? Prior-posterior contraction,
+`1 - sd(posterior) / sd(prior)`, sits near 1 when a parameter is pinned down by
+the data and near 0 when its posterior is only the prior read back. This catches
+what recovery cannot, because a parameter the model never uses passes recovery
+easily — its posterior stays equal to a prior wide enough to contain the truth.
+Disconnecting `sigma_district` from the model is exactly that failure, and it was
+the one deliberate bug the suite missed before this check existed.
+
 The data tests cover the same class of failure one layer down. Shapes and
 indices are checked not because a mismatch would crash — it usually would — but
 because the cases that do not crash are the dangerous ones: a `y` of shape
@@ -229,13 +238,16 @@ error at all.
 - The smallest district has 11 listings. Partial pooling is what makes such a
   district usable at all, but its estimate is still driven mostly by the city
   prior.
-- Validation stops at parameter recovery. Simulation-based calibration and a
-  prior-posterior contraction check are not implemented yet.
-- All reported numbers come from a single train/test split with seed 0.
+- Validation covers parameter recovery and prior-posterior contraction.
+  Simulation-based calibration is not implemented yet.
+- All reported numbers come from a single train/test split with seed 0, and that
+  matters more than it sounds: a different split moves RMSE by 46% while the
+  sampler seed moves it by 0.1%. The median error is the most stable of the
+  three metrics. Measurements in `docs/notes.md`.
 
 ## Roadmap
 
-- Simulation-based calibration and a prior-posterior contraction check.
+- Simulation-based calibration.
 
 ## License
 

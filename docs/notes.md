@@ -150,8 +150,17 @@ mutation it would be ≈ 0.03; in the correct model `sigma_district` has sd ~0.0
 against a prior sd of 0.30, so contraction ≈ 0.9. Requiring contraction > 0.5 for
 every parameter would close the gap.
 
-**Status:** not implemented, deferred to 0.2. The docstring of the recovery test
-already states the limitation.
+**Status:** implemented on 2026-10-06 as `test_data_informs_every_parameter`,
+with the threshold at 0.5. Measured contractions on the correct model: beta
+0.994, sigma 0.978, mu_city 0.967, nu 0.954, sigma_district 0.911, z_district
+0.668. Re-running the mutation above against the new test fails it on
+`sigma_district` at a contraction of −0.024, while parameter recovery and the
+convergence check still pass — so the gap described here is closed, and closed by
+this check rather than by the ones that already existed.
+
+The prior sd is obtained by sampling the model without observations rather than
+derived by hand, so that editing a prior in `model.py` cannot leave the test
+comparing against a stale number.
 
 **Conclusion:** a suite that passes is evidence of nothing until it has been
 shown that it can fail. Deliberately breaking the code turned nine passing tests
